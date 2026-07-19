@@ -26,4 +26,5 @@ def origin_is_allowed(origin: str | None, allowed_origins: Iterable[str]) -> boo
     if origin is None:
         return True
 
-    return origin in allowed_origins
+    allowed = tuple(allowed_origins)
+    return "*" in allowed or origin in allowed

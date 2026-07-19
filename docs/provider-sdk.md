@@ -226,3 +226,9 @@ async ({ direction }, { signal }) => {
 
 Wire each tool this way, forwarding to your own authoritative server when the provider should not be
 the source of truth.
+
+## From the browser console
+
+You do not need to ship a page to try this: paste the provider into any open tab's DevTools, register
+tools that act on the DOM, and connect. See [browser console](browser-console.md) for the full recipe
+(the `/sessions` endpoint, the origin config, the snippet, and the CSP caveats).

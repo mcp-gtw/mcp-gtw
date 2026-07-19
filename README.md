@@ -86,6 +86,7 @@ example of building your own extension.
 | [Configuration](docs/configuration.md) | Every setting and environment variable. |
 | [Provider protocol](docs/provider-protocol.md) | The private gateway ⇄ provider message protocol. |
 | [Provider SDK](docs/provider-sdk.md) | Writing the JavaScript provider and registering tools. |
+| [Browser console](docs/browser-console.md) | Turn any open page into a provider from DevTools. |
 | [MCP clients](docs/mcp-clients.md) | Connecting Claude Code, generic clients and the Inspector. |
 | [Admin dashboard](docs/admin.md) | The optional monitoring dashboard and its stats API. |
 | [Security](docs/security.md) | The security model, tokens, origins and hardening. |

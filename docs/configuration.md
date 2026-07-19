@@ -15,8 +15,8 @@ Prefix: `GATEWAY_`. Defined in [`config.py`](../src/mcp_gtw/config.py).
 | `GATEWAY_HOST` | `127.0.0.1` | Interface the bundled runner (`python -m mcp_gtw.main`) binds to. |
 | `GATEWAY_PORT` | `8000` | Port the bundled runner binds to. |
 | `GATEWAY_MAXIMUM_CONCURRENT_CONNECTIONS` | empty (unlimited) | Caps simultaneous connections at the server (uvicorn `limit_concurrency`). Empty delegates to the server default. |
-| `GATEWAY_ALLOWED_PROVIDER_ORIGINS` | `localhost`/`127.0.0.1` on `8000` | Origins allowed to open the private provider WebSocket. |
-| `GATEWAY_ALLOWED_MCP_ORIGINS` | empty | Origins allowed on `/mcp`. Empty accepts native clients (no `Origin`). |
+| `GATEWAY_ALLOWED_PROVIDER_ORIGINS` | `localhost`/`127.0.0.1` on `8000` | Origins allowed to open the private provider WebSocket. `*` allows any origin. |
+| `GATEWAY_ALLOWED_MCP_ORIGINS` | empty | Origins allowed on `/mcp`. Empty accepts native clients (no `Origin`); `*` allows any origin. |
 | `GATEWAY_CORS_ALLOW_ORIGINS` | `*` | Origins allowed by CORS on the HTTP endpoints. |
 | `GATEWAY_TOOL_CALL_TIMEOUT_SECONDS` | `60` | How long a `tools/call` waits for the provider before timing out. |
 | `GATEWAY_MAXIMUM_TOOLS` | `128` | Maximum number of tools a provider may register. |

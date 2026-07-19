@@ -31,3 +31,5 @@ def test_origin_is_allowed() -> None:
     assert origin_is_allowed(None, ["http://a"]) is True
     assert origin_is_allowed("http://a", ["http://a"]) is True
     assert origin_is_allowed("http://evil", ["http://a"]) is False
+    assert origin_is_allowed("http://anything", ["*"]) is True
+    assert origin_is_allowed("http://anything", []) is False

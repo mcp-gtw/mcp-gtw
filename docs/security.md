@@ -21,6 +21,9 @@ lookup on random values, so there is nothing to brute force in practice.
   Native clients without an `Origin` are accepted, matching the Streamable HTTP guidance.
 - The provider WebSocket requires a valid provider token and an allowed origin
   (`GATEWAY_ALLOWED_PROVIDER_ORIGINS`), otherwise it closes with `1008`.
+- Both origin allowlists accept `*` to allow any origin (opt-in). An empty list stays fail-closed:
+  it rejects every browser `Origin` and only accepts native clients that send none. The token remains
+  the real credential, so `*` widens who may *attempt* a connection, not who is authorized.
 - CORS is applied to the HTTP endpoints via `GATEWAY_CORS_ALLOW_ORIGINS`.
 - In production, terminate TLS so tokens and payloads travel over HTTPS and WSS. Bind to `127.0.0.1`
   for local use rather than `0.0.0.0`.

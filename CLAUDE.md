@@ -57,6 +57,9 @@ This repo is published to PyPI as `mcp-gtw` (the import package stays `mcp_gtw`)
   `GatewayConfigurationError` at construction). Details: [docs/admin.md](docs/admin.md).
 - **Security** — trust boundaries, the two tokens, origin checks, WebSocket robustness, resource
   limits: [docs/security.md](docs/security.md).
+- **Browser console** — turn any open page into a provider from DevTools (a `/sessions` subclass, an
+  origin `*`, a paste-in snippet), plus the CSP/mixed-content caveats:
+  [docs/browser-console.md](docs/browser-console.md).
 - **Quickstart / MCP clients / testing / deployment** — [docs/quickstart.md](docs/quickstart.md),
   [docs/mcp-clients.md](docs/mcp-clients.md), [docs/testing.md](docs/testing.md),
   [docs/deployment.md](docs/deployment.md).
