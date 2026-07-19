@@ -1,0 +1,27 @@
+name: mcp-gtw
+
+services:
+  gateway:
+    build: .
+    # Or pull a published image instead of building from source:
+    # image: ghcr.io/mcp-gtw/mcp-gtw:latest
+    restart: unless-stopped
+    ports:
+      # Behind a TLS reverse proxy, prefer binding to loopback: "127.0.0.1:8000:8000".
+      - "8000:8000"
+    # GATEWAY_* values live in a .env on the server (copied from .env.example).
+    # Compose reads it on the host and injects the values as environment variables;
+    # the file is never baked into the image.
+    env_file:
+      - path: .env
+        required: false
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request,sys; sys.exit(0 if urllib.request.urlopen("http://127.0.0.1:8000/health").status == 200 else 1)
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s

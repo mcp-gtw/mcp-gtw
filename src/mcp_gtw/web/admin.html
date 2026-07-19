@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en" class="h-full">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Gateway Admin</title>
+        <link
+            rel="icon"
+            href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%232563eb'/><text x='16' y='23' font-size='19' font-family='system-ui,sans-serif' font-weight='700' text-anchor='middle' fill='white'>A</text></svg>"
+        />
+        <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+        <script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
+    </head>
+    <body class="min-h-full bg-slate-950 text-slate-100 antialiased">
+        <main class="mx-auto max-w-6xl px-6 py-8">
+            <header class="flex flex-wrap items-center gap-3">
+                <img src="/logo.svg" alt="logo" class="h-9 w-9" />
+                <div>
+                    <h1 class="text-xl font-semibold tracking-tight" id="app-name">Gateway Admin</h1>
+                    <p class="text-xs text-slate-400" id="app-version"></p>
+                </div>
+                <span class="flex-1"></span>
+                <span id="status" class="rounded-full border border-slate-700 px-3 py-1 text-xs">connecting…</span>
+                <label class="flex items-center gap-2 text-xs text-slate-400">
+                    <input id="autorefresh" type="checkbox" checked class="accent-sky-500" /> auto
+                </label>
+                <button id="refresh" class="rounded-lg bg-sky-500 px-3 py-1.5 text-sm font-semibold text-slate-950">Refresh</button>
+            </header>
+
+            <section class="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-4">
+                <div class="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
+                    <p class="text-xs uppercase tracking-widest text-slate-400">Channels</p>
+                    <p class="mt-2 text-3xl font-bold text-sky-300" id="t-channels">—</p>
+                </div>
+                <div class="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
+                    <p class="text-xs uppercase tracking-widest text-slate-400">Providers online</p>
+                    <p class="mt-2 text-3xl font-bold text-teal-300" id="t-providers">—</p>
+                </div>
+                <div class="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
+                    <p class="text-xs uppercase tracking-widest text-slate-400">Tools</p>
+                    <p class="mt-2 text-3xl font-bold text-violet-300" id="t-tools">—</p>
+                </div>
+                <div class="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
+                    <p class="text-xs uppercase tracking-widest text-slate-400">Pending calls</p>
+                    <p class="mt-2 text-3xl font-bold text-amber-300" id="t-pending">—</p>
+                </div>
+            </section>
+
+            <section class="mt-6 overflow-x-auto rounded-2xl border border-slate-800">
+                <table class="w-full text-left text-sm">
+                    <thead class="bg-slate-900/80 text-xs uppercase tracking-wider text-slate-400">
+                        <tr>
+                            <th class="px-4 py-3">Channel</th>
+                            <th class="px-4 py-3">Provider</th>
+                            <th class="px-4 py-3">Tools</th>
+                            <th class="px-4 py-3">Pending</th>
+                            <th class="px-4 py-3">Age</th>
+                            <th class="px-4 py-3">Reclaim in</th>
+                        </tr>
+                    </thead>
+                    <tbody id="rows" class="divide-y divide-slate-800"></tbody>
+                </table>
+                <p id="empty" class="hidden px-4 py-8 text-center text-slate-500">No channels connected.</p>
+            </section>
+
+            <p class="mt-4 text-xs text-slate-500" id="updated"></p>
+        </main>
+
+        <script>
+            const key = new URLSearchParams(location.search).get("key");
+            const withKey = (url) => (key ? `${url}?key=${encodeURIComponent(key)}` : url);
+
+            function setStatus(text, ok) {
+                $("#status")
+                    .text(text)
+                    .css("color", ok ? "#5eead4" : "#fca5a5")
+                    .css("border-color", ok ? "rgba(94,234,212,.5)" : "rgba(252,165,165,.5)");
+            }
+
+            function humanize(seconds) {
+                if (seconds === null) return "—";
+                if (seconds < 0) return "now";
+                if (seconds < 60) return `${Math.round(seconds)}s`;
+                if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+                return `${Math.round(seconds / 3600)}h`;
+            }
+
+            function render(data) {
+                $("#app-name").text(data.app.name);
+                $("#app-version").text(`v${data.app.version}`);
+                $("#t-channels").text(data.totals.channels);
+                $("#t-providers").text(data.totals.providersConnected);
+                $("#t-tools").text(data.totals.tools);
+                $("#t-pending").text(data.totals.pendingCalls);
+
+                const rows = data.channels
+                    .map((c) => {
+                        const dot = c.providerConnected
+                            ? '<span class="text-teal-300">● online</span>'
+                            : '<span class="text-slate-500">○ offline</span>';
+                        const name = c.providerName ? $("<span>").text(c.providerName).html() : "—";
+                        const tools = c.tools.length
+                            ? $("<span>").text(c.tools.join(", ")).html()
+                            : "—";
+                        const channelId = $("<span>").text(c.channelId).html();
+                        return `<tr class="hover:bg-slate-900/40">
+                            <td class="px-4 py-3 font-mono text-xs text-slate-300">${channelId}</td>
+                            <td class="px-4 py-3">${dot}<div class="text-xs text-slate-500">${name}</div></td>
+                            <td class="px-4 py-3">${c.toolCount}<div class="text-xs text-slate-500">${tools}</div></td>
+                            <td class="px-4 py-3">${c.pendingCalls}</td>
+                            <td class="px-4 py-3 text-slate-400">${humanize(c.ageSeconds)}</td>
+                            <td class="px-4 py-3 text-slate-400">${humanize(c.reclaimInSeconds)}</td>
+                        </tr>`;
+                    })
+                    .join("");
+                $("#rows").html(rows);
+                $("#empty").toggleClass("hidden", data.channels.length > 0);
+                $("#updated").text(`Updated ${new Date().toLocaleTimeString()}`);
+            }
+
+            function load() {
+                $.getJSON(withKey("/admin/stats"))
+                    .done((data) => {
+                        setStatus("connected", true);
+                        render(data);
+                    })
+                    .fail((xhr) => setStatus(`error ${xhr.status}`, false));
+            }
+
+            let timer = null;
+            function schedule() {
+                if (timer) clearInterval(timer);
+                if ($("#autorefresh").is(":checked")) timer = setInterval(load, 3000);
+            }
+
+            $("#refresh").on("click", load);
+            $("#autorefresh").on("change", schedule);
+            load();
+            schedule();
+        </script>
+    </body>
+</html>

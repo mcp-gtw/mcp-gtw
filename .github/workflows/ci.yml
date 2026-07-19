@@ -1,0 +1,26 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        run: pip install uv
+      - name: Create the environment
+        run: make install
+      - name: Lint
+        run: make lint
+      - name: Coverage gate
+        run: make coverage

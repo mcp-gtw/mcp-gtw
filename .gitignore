@@ -1,0 +1,57 @@
+# os
+Thumbs.db
+.DS_Store
+
+# ide
+.idea
+.vscode
+.iml
+
+# auto generated
+**/*.pyc
+*.autosave
+*.user
+*.user.*
+.vs
+__pycache__
+Brewfile.lock.json
+.metals
+.ruff_cache
+
+# node
+node_modules
+package-lock.json
+
+# cmake
+CMakeUserPresets.json
+CMakeSettings.json
+CMakeLists.txt.user
+
+# java/kotlin
+.gradle
+
+# cxx
+.cxx
+
+# flutter
+*.reflectable.dart
+
+# postgres
+postgres-data
+
+# python
+*.egg-info
+.pytest_cache
+poetry.lock
+.venv
+/htmlcov
+
+# app
+*.db
+.coverage
+coverage.xml
+.fastapicloud
+data/
+
+# local secrets (keep .env.example tracked)
+.env
