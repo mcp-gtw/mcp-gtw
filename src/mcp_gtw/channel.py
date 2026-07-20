@@ -390,17 +390,16 @@ class Channel:
 
         subscribers = self._subscriptions.setdefault(uri, set())
         subscribers.add(id(session))
-        subscribed = False
 
         try:
             await self._call_provider(protocol.SUBSCRIBE, {"uri": uri})
-            subscribed = True
-        finally:
-            if not subscribed:
-                subscribers.discard(id(session))
+        except BaseException:
+            subscribers.discard(id(session))
 
-                if not subscribers and self._subscriptions.get(uri) is subscribers:
-                    del self._subscriptions[uri]
+            if not subscribers and self._subscriptions.get(uri) is subscribers:
+                del self._subscriptions[uri]
+
+            raise
 
     async def unsubscribe(self, uri: str, session: Any) -> None:
         await self._call_provider(protocol.UNSUBSCRIBE, {"uri": uri})

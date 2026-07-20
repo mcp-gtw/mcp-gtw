@@ -138,6 +138,26 @@ async def test_subscription_failure_keeps_other_subscribers(settings: GatewaySet
     assert channel._subscriptions == {"mem://a": {999}}
 
 
+async def test_subscribe_rollback_keeps_a_replaced_subscription_set(
+    settings: GatewaySettings,
+) -> None:
+    channel = make_channel(settings)
+    websocket = FakeWebSocket()
+    await channel.attach(websocket, provider_id="p", provider_name=None)
+
+    task = asyncio.create_task(channel.subscribe("mem://u", object()))
+    await asyncio.sleep(0)
+
+    replacement = {object()}
+    channel._subscriptions["mem://u"] = replacement
+    await channel.detach(websocket)
+
+    with pytest.raises(ProviderRequestError):
+        await task
+
+    assert channel._subscriptions["mem://u"] is replacement
+
+
 async def test_resync_replays_subscriptions_to_reconnected_provider(
     settings: GatewaySettings,
 ) -> None:
