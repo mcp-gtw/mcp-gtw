@@ -220,6 +220,9 @@ The gateway replies with `pong`.
 - When the provider disconnects, all registries are cleared, pending calls fail with an offline
   error, and MCP clients receive the same `*_list_changed` notifications.
 - Client subscriptions are **client state**, not a provider registry: they survive a provider
-  reconnect, so a client stays subscribed to a resource across a provider bounce.
+  reconnect, so a client stays subscribed to a resource across a provider bounce. Right after
+  `hello.ack`, the gateway replays a `resources/subscribe` for every still-subscribed `uri` to the
+  new provider, so it resumes emitting `notifications/resources/updated` without the client
+  resubscribing.
 - At most `GATEWAY_MAXIMUM_PENDING_CALLS_PER_CHANNEL` requests may be in flight at once; a request
   that is not answered within `GATEWAY_TOOL_CALL_TIMEOUT_SECONDS` fails and a `cancel` is sent.

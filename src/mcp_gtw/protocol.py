@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from typing import Any, Final
 
 # gateway → provider
@@ -68,50 +67,3 @@ def response(request_id: str, *, result: Any = None, error: str | None = None) -
 
 def protocol_error(message: str) -> dict[str, Any]:
     return {"type": PROTOCOL_ERROR, "message": message}
-
-
-def decode_message(text: str, maximum_depth: int) -> dict[str, Any]:
-    """Parse an untrusted provider message into a JSON object.
-
-    The container depth is bounded before parsing so a hostile payload cannot exhaust the
-    interpreter stack, and the result must be a JSON object.
-    """
-
-    if _exceeds_depth(text, maximum_depth):
-        raise ValueError(f"Message nesting exceeds the maximum depth of {maximum_depth}")
-
-    payload = json.loads(text)
-
-    if not isinstance(payload, dict):
-        raise ValueError("Message must be a JSON object")
-
-    return payload
-
-
-def _exceeds_depth(text: str, maximum_depth: int) -> bool:
-    depth = 0
-    in_string = False
-    escaped = False
-
-    for character in text:
-        if in_string:
-            if escaped:
-                escaped = False
-            elif character == "\\":
-                escaped = True
-            elif character == '"':
-                in_string = False
-
-            continue
-
-        if character == '"':
-            in_string = True
-        elif character in "[{":
-            depth += 1
-
-            if depth > maximum_depth:
-                return True
-        elif character in "]}":
-            depth -= 1
-
-    return False

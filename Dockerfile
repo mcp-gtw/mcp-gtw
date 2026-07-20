@@ -9,7 +9,10 @@ WORKDIR /srv
 COPY pyproject.toml README.md ./
 COPY src ./src
 
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir . \
+    && useradd --system --uid 10001 --user-group gateway
+
+USER gateway
 
 EXPOSE 8000
 

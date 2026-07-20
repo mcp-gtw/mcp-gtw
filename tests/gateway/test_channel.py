@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from typing import Any
 
 import mcp.types as types
@@ -92,12 +93,214 @@ async def test_pending_call_limit(settings: GatewaySettings, move_tool: dict) ->
         assert (await task).isError is True
 
 
+async def test_subscription_limit_rejects_a_new_uri(settings: GatewaySettings) -> None:
+    limited = settings.model_copy(update={"maximum_subscriptions_per_channel": 2})
+    channel = make_channel(limited)
+    channel._subscriptions = {"mem://a": set(), "mem://b": set()}
+
+    with pytest.raises(ProviderRequestError, match="Too many resource subscriptions"):
+        await channel.subscribe("mem://c", object())
+
+
+async def test_subscription_limit_allows_resubscribe(settings: GatewaySettings) -> None:
+    limited = settings.model_copy(update={"maximum_subscriptions_per_channel": 1})
+    channel = make_channel(limited)
+    websocket = FakeWebSocket()
+    await channel.attach(websocket, provider_id="p", provider_name=None)
+    channel._subscriptions = {"mem://a": {1}}
+
+    task = asyncio.create_task(channel.subscribe("mem://a", object()))
+    await asyncio.sleep(0)
+
+    request = next(m for m in websocket.messages if m.get("method") == "resources/subscribe")
+    channel.handle_result({"type": "result", "requestId": request["requestId"], "result": {}})
+    await task
+
+    assert channel._subscriptions["mem://a"]
+
+
+async def test_subscription_reserved_slot_released_on_failure(settings: GatewaySettings) -> None:
+    channel = make_channel(settings)
+
+    with pytest.raises(ProviderRequestError, match="provider is offline"):
+        await channel.subscribe("mem://x", object())
+
+    assert channel._subscriptions == {}
+
+
+async def test_subscription_failure_keeps_other_subscribers(settings: GatewaySettings) -> None:
+    channel = make_channel(settings)
+    channel._subscriptions = {"mem://a": {999}}
+
+    with pytest.raises(ProviderRequestError, match="provider is offline"):
+        await channel.subscribe("mem://a", object())
+
+    assert channel._subscriptions == {"mem://a": {999}}
+
+
+async def test_resync_replays_subscriptions_to_reconnected_provider(
+    settings: GatewaySettings,
+) -> None:
+    channel = make_channel(settings)
+    channel._subscriptions = {"mem://a": {1}, "mem://b": {2}}
+    provider = FakeWebSocket()
+    await channel.attach(provider, provider_id="p2", provider_name=None)
+
+    await channel.resync_subscriptions()
+
+    replayed = {
+        m["params"]["uri"] for m in provider.messages if m.get("method") == "resources/subscribe"
+    }
+    assert replayed == {"mem://a", "mem://b"}
+
+
+async def test_resync_without_subscriptions_sends_nothing(settings: GatewaySettings) -> None:
+    channel = make_channel(settings)
+    provider = FakeWebSocket()
+    await channel.attach(provider, provider_id="p", provider_name=None)
+
+    await channel.resync_subscriptions()
+
+    assert not any(m.get("method") == "resources/subscribe" for m in provider.messages)
+
+
+async def test_subscribe_survives_session_eviction_during_await(settings: GatewaySettings) -> None:
+    limited = settings.model_copy(update={"maximum_mcp_sessions_per_channel": 1})
+    channel = make_channel(limited)
+    websocket = FakeWebSocket()
+    await channel.attach(websocket, provider_id="p", provider_name=None)
+    subscriber = object()
+
+    task = asyncio.create_task(channel.subscribe("mem://u", subscriber))
+    await asyncio.sleep(0)
+
+    channel.remember_mcp_session(object())
+    channel.remember_mcp_session(object())
+
+    request = next(m for m in websocket.messages if m.get("method") == "resources/subscribe")
+    channel.handle_result({"type": "result", "requestId": request["requestId"], "result": {}})
+    await task
+
+    assert id(subscriber) in channel._subscriptions["mem://u"]
+
+
+async def test_concurrent_subscribes_never_overshoot_the_cap(settings: GatewaySettings) -> None:
+    limited = settings.model_copy(
+        update={
+            "maximum_subscriptions_per_channel": 5,
+            "maximum_pending_calls_per_channel": 64,
+            "tool_call_timeout_seconds": 2,
+        }
+    )
+    channel = make_channel(limited)
+    websocket = FakeWebSocket()
+    await channel.attach(websocket, provider_id="p", provider_name=None)
+
+    async def responder() -> None:
+        answered: set[str] = set()
+
+        while True:
+            for message in list(websocket.messages):
+                request_id = message.get("requestId")
+
+                if message.get("method") == "resources/subscribe" and request_id not in answered:
+                    answered.add(request_id)
+                    channel.handle_result({"type": "result", "requestId": request_id, "result": {}})
+
+            await asyncio.sleep(0)
+
+    task = asyncio.create_task(responder())
+    results = await asyncio.gather(
+        *[channel.subscribe(f"mem://{index}", object()) for index in range(20)],
+        return_exceptions=True,
+    )
+    task.cancel()
+
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+    rejected = [error for error in results if isinstance(error, Exception)]
+    assert len(channel._subscriptions) == 5
+    assert len(rejected) == 15
+    assert all("Too many resource subscriptions" in str(error) for error in rejected)
+
+
+async def test_stale_provider_frame_cannot_clobber_the_channel(
+    settings: GatewaySettings, move_tool: dict
+) -> None:
+    channel = make_channel(settings)
+    old = FakeWebSocket()
+    await channel.attach(old, provider_id="a", provider_name=None)
+    new = FakeWebSocket()
+    await channel.attach(new, provider_id="b", provider_name=None)
+
+    with pytest.raises(ChannelOfflineError, match="connection changed"):
+        await channel.handle_provider_message(
+            old, {"type": "register", "registry": "tools", "items": [move_tool]}
+        )
+
+    assert channel.list_tools() == []
+
+
 async def test_timeout_sends_cancel(settings: GatewaySettings, move_tool: dict) -> None:
     channel, websocket = await register_and_attach(settings, move_tool)
     result = await channel.execute_tool(name="move", arguments={"direction": "right"})
     assert result.isError is True
     assert "timed out" in result.content[0].text
     assert websocket.last("cancel")["reason"] == "timeout"
+
+
+async def test_call_timeout_can_be_overridden_per_tool(
+    settings: GatewaySettings, move_tool: dict
+) -> None:
+    class PerToolChannel(Channel):
+        def call_timeout_seconds(self, method: str, params: dict) -> float:
+            if params.get("name") == "move":
+                return 0.01
+
+            return super().call_timeout_seconds(method, params)
+
+    channel = PerToolChannel(
+        channel_id="c",
+        mcp_token="m",
+        provider_token="p",
+        settings=settings.model_copy(update={"tool_call_timeout_seconds": 5}),
+    )
+    await channel.attach(FakeWebSocket(), provider_id="p", provider_name=None)
+    await channel.register("tools", [move_tool])
+
+    result = await channel.execute_tool(name="move", arguments={"direction": "left"})
+    assert result.isError is True
+    assert "timed out after 0.01 seconds" in result.content[0].text
+
+
+async def test_call_timeout_none_disables_the_timeout(
+    settings: GatewaySettings, move_tool: dict
+) -> None:
+    class NoTimeoutChannel(Channel):
+        def call_timeout_seconds(self, method: str, params: dict) -> float | None:
+            return None
+
+    channel = NoTimeoutChannel(
+        channel_id="c",
+        mcp_token="m",
+        provider_token="p",
+        settings=settings.model_copy(update={"tool_call_timeout_seconds": 0.01}),
+    )
+    websocket = FakeWebSocket()
+    await channel.attach(websocket, provider_id="p", provider_name=None)
+    await channel.register("tools", [move_tool])
+
+    task = asyncio.create_task(channel.execute_tool(name="move", arguments={"direction": "left"}))
+    await asyncio.sleep(0.05)
+    assert not task.done()
+
+    call = websocket.last("request")
+    channel.handle_result(
+        {"type": "result", "requestId": call["requestId"], "result": {"ok": True}}
+    )
+    result = await task
+    assert result.isError is False
 
 
 async def test_detach_fails_pending_call(settings: GatewaySettings, move_tool: dict) -> None:
@@ -182,22 +385,24 @@ async def test_handle_provider_message_variants(settings: GatewaySettings, move_
     await channel.attach(websocket, provider_id="p", provider_name=None)
 
     await channel.handle_provider_message(
-        {"type": "register", "registry": "tools", "items": [move_tool]}
+        websocket, {"type": "register", "registry": "tools", "items": [move_tool]}
     )
     assert websocket.last("ack")["count"] == 1
 
-    await channel.handle_provider_message({"type": "ping"})
+    await channel.handle_provider_message(websocket, {"type": "ping"})
     assert websocket.last("pong")["type"] == "pong"
 
-    await channel.handle_provider_message({"type": "result", "requestId": "unknown", "result": {}})
+    await channel.handle_provider_message(
+        websocket, {"type": "result", "requestId": "unknown", "result": {}}
+    )
 
     with pytest.raises(ProviderMessageError, match="array of objects"):
         await channel.handle_provider_message(
-            {"type": "register", "registry": "tools", "items": "nope"}
+            websocket, {"type": "register", "registry": "tools", "items": "nope"}
         )
 
     with pytest.raises(ProviderMessageError, match="Unsupported provider message"):
-        await channel.handle_provider_message({"type": "nonsense"})
+        await channel.handle_provider_message(websocket, {"type": "nonsense"})
 
 
 async def test_register_unknown_registry_is_rejected(settings: GatewaySettings) -> None:
@@ -221,6 +426,38 @@ async def test_register_tools_oversized_definition(
 
     with pytest.raises(ProviderMessageError, match="maximum size"):
         await channel.register("tools", [move_tool])
+
+
+async def test_none_disables_tool_count_and_size_limits(
+    settings: GatewaySettings, move_tool: dict
+) -> None:
+    channel = make_channel(
+        settings.model_copy(update={"maximum_tools": None, "maximum_tool_definition_bytes": None})
+    )
+    websocket = FakeWebSocket()
+    await channel.attach(websocket, provider_id="p", provider_name=None)
+
+    tools = [{**move_tool, "name": f"t{index}"} for index in range(5)]
+    await channel.register("tools", tools)
+
+    assert len(channel._tools) == 5
+
+
+async def test_none_disables_mcp_session_eviction(settings: GatewaySettings) -> None:
+    channel = make_channel(settings.model_copy(update={"maximum_mcp_sessions_per_channel": None}))
+
+    for _ in range(50):
+        channel.remember_mcp_session(object())
+
+    assert len(channel._mcp_sessions) == 50
+
+
+async def test_none_disables_subscription_limit(settings: GatewaySettings) -> None:
+    channel = make_channel(settings.model_copy(update={"maximum_subscriptions_per_channel": None}))
+    channel._subscriptions = {f"mem://{index}": {index} for index in range(10)}
+
+    with pytest.raises(ProviderRequestError, match="provider is offline"):
+        await channel.subscribe("mem://new", object())
 
 
 async def test_register_tools_invalid_definition(settings: GatewaySettings) -> None:
@@ -778,11 +1015,12 @@ async def test_handle_provider_message_dispatches_notify(settings: GatewaySettin
     await _drive(channel, websocket, task, {"result": {}})
 
     await channel.handle_provider_message(
+        websocket,
         {
             "type": "notify",
             "method": "notifications/resources/updated",
             "params": {"uri": "mem://a"},
-        }
+        },
     )
     assert session.updated == ["mem://a"]
 
@@ -856,6 +1094,14 @@ async def test_get_prompt_error(settings: GatewaySettings) -> None:
         await _drive(channel, websocket, task, {"error": "unknown prompt"})
 
 
+async def test_get_prompt_rejects_invalid_result(settings: GatewaySettings) -> None:
+    channel, websocket = await attach_only(settings)
+    task = asyncio.create_task(channel.get_prompt("greet", None))
+
+    with pytest.raises(ProviderRequestError, match="invalid prompt result"):
+        await _drive(channel, websocket, task, {"result": {"messages": "not-a-list"}})
+
+
 async def test_complete_success(settings: GatewaySettings) -> None:
     channel, websocket = await attach_only(settings)
     task = asyncio.create_task(
@@ -869,13 +1115,24 @@ async def test_complete_success(settings: GatewaySettings) -> None:
     assert result.values == ["hi", "ho"]
 
 
+async def test_complete_rejects_invalid_result(settings: GatewaySettings) -> None:
+    channel, websocket = await attach_only(settings)
+    task = asyncio.create_task(
+        channel.complete({"type": "ref/prompt", "name": "greet"}, {"name": "a", "value": "h"}, None)
+    )
+
+    with pytest.raises(ProviderRequestError, match="invalid completion result"):
+        await _drive(channel, websocket, task, {"result": {"values": "not-a-list"}})
+
+
 async def _log(channel: Channel, level: str, data: str = "x") -> None:
     await channel.handle_provider_message(
+        channel._websocket,
         {
             "type": "notify",
             "method": "notifications/message",
             "params": {"level": level, "data": data, "logger": "app"},
-        }
+        },
     )
 
 
@@ -923,11 +1180,12 @@ async def test_progress_relayed_to_originating_session(settings: GatewaySettings
     request_id = websocket.last("request")["requestId"]
 
     await channel.handle_provider_message(
+        websocket,
         {
             "type": "notify",
             "method": "notifications/progress",
             "params": {"requestId": request_id, "progress": 0.5, "total": 1, "message": "half"},
-        }
+        },
     )
     assert session.progress == [("tok", 0.5, 1, "half")]
 
@@ -948,18 +1206,20 @@ async def test_progress_without_token_is_ignored(settings: GatewaySettings) -> N
     request_id = websocket.last("request")["requestId"]
 
     await channel.handle_provider_message(
+        websocket,
         {
             "type": "notify",
             "method": "notifications/progress",
             "params": {"requestId": request_id, "progress": 1},
-        }
+        },
     )
     await channel.handle_provider_message(
+        websocket,
         {
             "type": "notify",
             "method": "notifications/progress",
             "params": {"requestId": "unknown", "progress": 1},
-        }
+        },
     )
     channel.handle_result({"type": "result", "requestId": request_id, "result": {"ok": True}})
     await task
@@ -984,12 +1244,13 @@ async def test_sampling_relayed_to_client(settings: GatewaySettings) -> None:
 
     messages = [{"role": "user", "content": {"type": "text", "text": "q"}}]
     await channel.handle_provider_message(
+        websocket,
         {
             "type": "call",
             "requestId": "r1",
             "method": "sampling/createMessage",
             "params": {"messages": messages, "maxTokens": 100, "modelPreferences": {"hints": []}},
-        }
+        },
     )
     reply = websocket.last("response")
     assert reply["requestId"] == "r1"
@@ -997,12 +1258,13 @@ async def test_sampling_relayed_to_client(settings: GatewaySettings) -> None:
     assert session.create_kwargs["model_preferences"] is not None
 
     await channel.handle_provider_message(
+        websocket,
         {
             "type": "call",
             "requestId": "r2",
             "method": "sampling/createMessage",
             "params": {"messages": messages, "maxTokens": 50},
-        }
+        },
     )
     assert session.create_kwargs["model_preferences"] is None
 
@@ -1013,12 +1275,13 @@ async def test_elicitation_relayed_to_client(settings: GatewaySettings) -> None:
     channel.remember_mcp_session(session)
 
     await channel.handle_provider_message(
+        websocket,
         {
             "type": "call",
             "requestId": "e1",
             "method": "elicitation/create",
             "params": {"message": "Your name?", "requestedSchema": {"type": "object"}},
-        }
+        },
     )
     reply = websocket.last("response")
     assert reply["result"]["action"] == "accept"

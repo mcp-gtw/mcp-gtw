@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
 import time
 from collections.abc import Iterable
 
 from mcp_gtw.channel import Channel
 from mcp_gtw.config import GatewaySettings
 from mcp_gtw.errors import ChannelCapacityError
-from mcp_gtw.helpers.security import generate_token
+from mcp_gtw.expiry import ExpiryPolicy, TtlExpiryPolicy
 from mcp_gtw.listeners import GatewayListener
+from mcp_gtw.tokens import SecretsTokenProvider, TokenProvider
 
 logger = logging.getLogger(__name__)
 
@@ -23,10 +23,15 @@ class ChannelRegistry:
         settings: GatewaySettings,
         listeners: Iterable[GatewayListener] = (),
         channel_class: type[Channel] = Channel,
+        tokens: TokenProvider | None = None,
+        expiry_policy: ExpiryPolicy | None = None,
     ) -> None:
         self.settings = settings
         self._listeners = list(listeners)
         self._channel_class = channel_class
+        self._tokens = tokens or SecretsTokenProvider()
+        self._expiry_policy = expiry_policy or TtlExpiryPolicy(settings.offline_ttl_seconds)
+        self._track_created = settings.admin_enabled
         self._channels: dict[str, Channel] = {}
         self._by_mcp_token: dict[str, str] = {}
         self._by_provider_token: dict[str, str] = {}
@@ -34,13 +39,16 @@ class ChannelRegistry:
         self._created: dict[str, float] = {}
         self._lock = asyncio.Lock()
 
+    def add_listener(self, listener: GatewayListener) -> None:
+        self._listeners.append(listener)
+
+    @property
+    def tokens(self) -> TokenProvider:
+        return self._tokens
+
     @property
     def channel_count(self) -> int:
         return len(self._channels)
-
-    @property
-    def connected_provider_count(self) -> int:
-        return sum(1 for channel in self._channels.values() if channel.provider_connected)
 
     def get(self, channel_id: str) -> Channel | None:
         return self._channels.get(channel_id)
@@ -67,20 +75,22 @@ class ChannelRegistry:
         channels = [
             {
                 **channel.snapshot(),
-                "ageSeconds": round(now - self._created[channel_id], 1),
+                "ageSeconds": self._age_seconds(channel_id, now),
                 "reclaimInSeconds": self._reclaim_in(channel_id, channel, now),
             }
             for channel_id, channel in self._channels.items()
         ]
         return sorted(channels, key=lambda entry: not entry["providerConnected"])
 
-    def _reclaim_in(self, channel_id: str, channel: Channel, now: float) -> float | None:
-        expiry = self._expiry[channel_id]
+    def _age_seconds(self, channel_id: str, now: float) -> float | None:
+        created = self._created.get(channel_id)
+        return None if created is None else round(now - created, 1)
 
-        if channel.provider_connected or math.isinf(expiry):
+    def _reclaim_in(self, channel_id: str, channel: Channel, now: float) -> float | None:
+        if channel.provider_connected:
             return None
 
-        return round(max(0.0, expiry - now), 1)
+        return self._expiry_policy.reclaim_in(self._expiry[channel_id], now)
 
     async def create_channel(
         self,
@@ -88,20 +98,33 @@ class ChannelRegistry:
         channel_id: str | None = None,
         metadata: dict | None = None,
         ttl_seconds: float | None = None,
+        provider_token: str | None = None,
+        mcp_token: str | None = None,
     ) -> Channel:
         async with self._lock:
-            if len(self._channels) >= self.settings.maximum_channels:
+            maximum_channels = self.settings.maximum_channels
+
+            if maximum_channels is not None and len(self._channels) >= maximum_channels:
                 raise ChannelCapacityError("The registry reached its maximum number of channels")
 
-            channel_id = channel_id or generate_token(12)
+            channel_id = channel_id or self._tokens.generate(12)
 
             if channel_id in self._channels:
                 raise ChannelCapacityError(f"Channel already exists: {channel_id}")
 
+            resolved_mcp_token = mcp_token or self._unique_token()
+            resolved_provider_token = provider_token or self._unique_token()
+
+            if resolved_mcp_token == resolved_provider_token:
+                raise ValueError("The mcp token and the provider token must be different")
+
+            if self._token_taken(resolved_mcp_token) or self._token_taken(resolved_provider_token):
+                raise ChannelCapacityError("A channel with the same token already exists")
+
             channel = self._channel_class(
                 channel_id=channel_id,
-                mcp_token=self._unique_token(self._by_mcp_token),
-                provider_token=self._unique_token(self._by_provider_token),
+                mcp_token=resolved_mcp_token,
+                provider_token=resolved_provider_token,
                 settings=self.settings,
                 metadata=metadata or {},
             )
@@ -110,9 +133,10 @@ class ChannelRegistry:
             self._channels[channel_id] = channel
             self._by_mcp_token[channel.mcp_token] = channel_id
             self._by_provider_token[channel.provider_token] = channel_id
-            self._created[channel_id] = now
-            grace = self.settings.offline_ttl_seconds if ttl_seconds is None else ttl_seconds
-            self._expiry[channel_id] = now + grace
+            self._expiry[channel_id] = self._expiry_policy.initial_deadline(now, ttl_seconds)
+
+            if self._track_created:
+                self._created[channel_id] = now
 
         logger.info("Channel created: %s", channel_id)
         await self._dispatch("on_channel_created", channel)
@@ -144,7 +168,8 @@ class ChannelRegistry:
         expired = [
             channel_id
             for channel_id, channel in self._channels.items()
-            if not channel.provider_connected and self._expiry[channel_id] <= now
+            if not channel.provider_connected
+            and self._expiry_policy.is_expired(self._expiry[channel_id], now)
         ]
         removed = 0
 
@@ -156,13 +181,15 @@ class ChannelRegistry:
 
     async def provider_connected(self, channel: Channel) -> None:
         if channel.channel_id in self._channels:
-            self._expiry[channel.channel_id] = float("inf")
+            self._expiry[channel.channel_id] = self._expiry_policy.connected_deadline()
 
         await self._dispatch("on_provider_connected", channel)
 
     async def provider_disconnected(self, channel: Channel) -> None:
         if channel.channel_id in self._channels and not channel.provider_connected:
-            self._expiry[channel.channel_id] = time.monotonic() + self.settings.offline_ttl_seconds
+            self._expiry[channel.channel_id] = self._expiry_policy.disconnected_deadline(
+                time.monotonic()
+            )
 
         await self._dispatch("on_provider_disconnected", channel)
 
@@ -170,11 +197,14 @@ class ChannelRegistry:
         for channel_id in list(self._channels):
             await self.remove_channel(channel_id)
 
-    def _unique_token(self, index: dict[str, str]) -> str:
-        while True:
-            token = generate_token()
+    def _token_taken(self, token: str) -> bool:
+        return token in self._by_mcp_token or token in self._by_provider_token
 
-            if token not in index:
+    def _unique_token(self) -> str:
+        while True:
+            token = self._tokens.generate()
+
+            if not self._token_taken(token):
                 return token
 
     async def _dispatch(self, event: str, channel: Channel) -> None:

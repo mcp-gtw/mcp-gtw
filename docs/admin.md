@@ -10,27 +10,43 @@ GATEWAY_ADMIN_ENABLED=true
 GATEWAY_ADMIN_KEY=a-long-random-key
 ```
 
-- `GATEWAY_ADMIN_ENABLED=false` (default): no admin routes exist at all — `/admin` returns `404`.
+- `GATEWAY_ADMIN_ENABLED=false` (default): no admin routes exist at all — `/admin` returns `404`, and
+  the registry does not track per-channel creation time (`ageSeconds` exists only for the dashboard),
+  so nothing runs on the hot path for a feature that is off.
 - `GATEWAY_ADMIN_ENABLED=true` with `GATEWAY_ADMIN_KEY` set: every request must carry `?key=<value>`;
   a wrong or missing key returns `403` (the key is compared in constant time).
-- `GATEWAY_ADMIN_ENABLED=true` **without** a key: constructing the `Gateway` raises
+- `GATEWAY_ADMIN_ENABLED=true` with an **empty or unset** key: constructing the `Gateway` raises
   `GatewayConfigurationError` at startup. The dashboard is never served unauthenticated.
+
+## Serving path
+
+The dashboard defaults to `/admin`, but `GATEWAY_ADMIN_PATH` moves it anywhere so bots cannot guess
+it. The stats API always follows as `<admin_path>/stats`, and the page derives that from its own
+location, so both move together.
+
+```dotenv
+GATEWAY_ADMIN_PATH=/ops/9f3c2b
+```
+
+The path must start with `/`, must not be `/`, and must not end with `/`. A value that collides with
+a built-in route (`/`, `/health`, `/provider`, `/logo.svg`, or anything under the `/mcp` mount) raises
+`GatewayConfigurationError` at startup rather than shadowing the gateway silently.
 
 ## Pages
 
 | Route | Purpose |
 | --- | --- |
-| `GET /admin` | The dashboard — a single HTML file using Tailwind CSS 4 (CDN) and jQuery. |
-| `GET /admin/stats` | The JSON the dashboard polls. |
+| `GET <admin_path>` | The dashboard — a single HTML file using Tailwind CSS 4 (CDN) and jQuery. |
+| `GET <admin_path>/stats` | The JSON the dashboard polls. |
 
-Open `http://127.0.0.1:8000/admin?key=<key>` in a browser. The page reads the key from its own URL
-and polls the stats endpoint every few seconds.
+Open `http://127.0.0.1:8000/admin?key=<key>` (or your custom path) in a browser. The page reads the
+key from its own URL and polls the stats endpoint every few seconds.
 
 ## Stats payload
 
 ```json
 {
-  "app": { "name": "MCP Gateway", "version": "0.1.0" },
+  "app": { "name": "MCP Gateway" },
   "totals": { "channels": 2, "providersConnected": 1, "tools": 5, "pendingCalls": 0 },
   "channels": [
     {
@@ -39,6 +55,7 @@ and polls the stats endpoint every few seconds.
       "providerId": "…",
       "providerName": "service-a",
       "toolCount": 5,
+      "resourceCount": 0,
       "tools": ["look_around", "move", "attack", "shoot", "return_to_base"],
       "pendingCalls": 0,
       "ageSeconds": 42.1,
@@ -48,8 +65,10 @@ and polls the stats endpoint every few seconds.
 }
 ```
 
-`reclaimInSeconds` is `null` while the provider is connected (the channel is not up for reclamation)
-and counts down once it goes offline. See [configuration](configuration.md) for
+`app` carries a `version` field only when `GATEWAY_EXPOSE_VERSION=true` (off by default, so the
+version is not fingerprintable). `reclaimInSeconds` is `null` while the provider is connected (the
+channel is not up for reclamation) and counts down once it goes offline. See
+[configuration](configuration.md) for
 `GATEWAY_OFFLINE_TTL_SECONDS`.
 
 ## Customizing

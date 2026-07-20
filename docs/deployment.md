@@ -24,7 +24,9 @@ release (pypi.org → Account → Publishing → Add a pending publisher): PyPI 
 The [`Dockerfile`](../Dockerfile) builds an image that serves the bare gateway through the bundled
 runner (`python -m mcp_gtw.main`), which reads `GatewaySettings` and applies the transport frame
 limit (`ws_max_size` = `GATEWAY_MAXIMUM_WEBSOCKET_MESSAGE_BYTES`) and `GATEWAY_MAXIMUM_CONCURRENT_CONNECTIONS`.
-Prefer this entrypoint over launching bare `uvicorn`, which would not apply those limits.
+Prefer this entrypoint over launching bare `uvicorn`, which would not apply those limits. The image
+runs production-ready out of the box: it binds `0.0.0.0` (`GATEWAY_HOST`), runs as a non-root user,
+and needs no extra flags — you only supply the `GATEWAY_*` config.
 
 ```bash
 docker build -t mcp-gtw .
@@ -66,6 +68,29 @@ How it works on the server:
 
 An application built on the library ships its own image with its own entrypoint — the same pattern,
 pointing `CMD` (and the compose `image`/`build`) at your `create_app()` module.
+
+## One-click deploy
+
+The gateway is a long-lived ASGI process that holds provider **WebSockets** open, so it must run on a
+platform that keeps a persistent server — a container or a VPS, not a serverless function.
+
+- **Render** — a [`render.yaml`](../render.yaml) Blueprint is included, wired to the `Dockerfile` with
+  `healthCheckPath: /health`. Use the **Deploy to Render** button in the [README](../README.md), or in
+  the dashboard: *New → Blueprint* and point it at the repository. Render injects `PORT`, which
+  `GatewaySettings` reads directly (see below), and `GATEWAY_HOST=0.0.0.0` comes from the image.
+- **Railway / Fly.io** — both run the `Dockerfile` as-is. On Railway, *New Project → Deploy from repo*
+  auto-detects it and injects `PORT`. On Fly, `fly launch` generates a `fly.toml` with
+  `internal_port = 8000`. Set `GATEWAY_ALLOWED_PROVIDER_ORIGINS` and, if you enable it, `GATEWAY_ADMIN_KEY`.
+- **Hostinger / any VPS** — use the [Docker](#docker) or [Docker Compose](#docker-compose-on-a-server)
+  path above on the VPS, behind the reverse proxy.
+- **Vercel / Netlify / serverless is not supported.** Serverless functions cannot hold the persistent
+  `/provider` WebSocket open, so the gateway cannot run there. Pick one of the platforms above.
+
+### The `PORT` variable
+
+`GatewaySettings.port` reads `GATEWAY_PORT` first and then the platform-standard `PORT`, so a host that
+injects `PORT` (Render, Railway, Heroku, Cloud Run, …) just works with no extra configuration. Set
+`GATEWAY_PORT` explicitly to override it.
 
 ### Configuration, not `.env`, in the image
 

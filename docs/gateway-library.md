@@ -7,13 +7,19 @@ and overriding what you need. It knows nothing about any domain.
 
 | Class | Module | Purpose |
 | --- | --- | --- |
-| `Gateway` | `gateway` | The application. Subclass and override to add behavior. |
+| `Gateway` | `gateway` | The application and composition root. Subclass and override to add behavior. |
 | `GatewaySettings` | `config` | Configuration (pydantic-settings). |
 | `Channel` | `channel` | One session: provider connection, tools, pending calls. |
 | `ChannelRegistry` | `registry` | Owns channels and resolves tokens. |
+| `TokenProvider` | `tokens` | Mints and compares tokens (default `SecretsTokenProvider`). |
+| `OriginPolicy` | `origin` | Allows or denies an `Origin` header (default `ListOriginPolicy`). |
+| `ExpiryPolicy` | `expiry` | Decides when an idle channel is reclaimed (default `TtlExpiryPolicy`). |
+| `ProtocolCodec` | `codec` | Parses an untrusted provider frame (default `JsonProtocolCodec`). |
+| `Authenticator` | `authenticator` | Maps a connection to a channel or denies it (default `TokenAuthenticator`). |
 | `GatewayListener` | `listeners` | The lifecycle hook interface that `Gateway` implements. |
 
-Because every `__init__.py` is empty, import from the submodule:
+Every behaviour above is a swappable strategy — the full contract of each, and how to swap it, is in
+[extensibility.md](extensibility.md). Because every `__init__.py` is empty, import from the submodule:
 
 ```python
 from mcp_gtw.gateway import Gateway
@@ -40,7 +46,17 @@ session manager, a channel reaper and your `serve` background tasks).
 | `settings_class` | `GatewaySettings` | Configuration class to instantiate. |
 | `registry_class` | `ChannelRegistry` | Registry implementation. |
 | `channel_class` | `Channel` | Channel implementation (subclass to store extra per-session state). |
+| `token_provider_class` | `SecretsTokenProvider` | How tokens are minted and compared. |
+| `origin_policy_class` | `ListOriginPolicy` | How an `Origin` header is admitted. |
+| `expiry_policy_class` | `TtlExpiryPolicy` | When an idle channel is reclaimed. |
+| `codec_class` | `JsonProtocolCodec` | How an untrusted provider frame is parsed. |
+| `authenticator_class` | `TokenAuthenticator` | How a connection maps to a channel or is denied. |
 | `mcp_server_name` | `"mcp-gtw"` | The MCP server identifier. |
+
+Each can also be passed as a built instance to `Gateway(...)` for dependency injection
+(`tokens=`, `codec=`, `provider_origins=`, `mcp_origins=`, `expiry_policy=`, `registry=`,
+`authenticator=`). Contracts and examples: [extensibility.md](extensibility.md). Authentication
+models (token, username/password, client-supplied token): [auth-recipes.md](auth-recipes.md).
 
 ### Lifecycle hooks
 
@@ -119,6 +135,28 @@ by `channel.channel_id` and populate it from `on_provider_connected`.
 
 Input validation lives in the channel because a single MCP server serves every channel — see
 [architecture](architecture.md).
+
+### Per-call timeouts
+
+The timeout for a relayed call is resolved by `Channel.call_timeout_seconds(method, params)`, which by
+default returns `tool_call_timeout_seconds`. Override it on a `channel_class` to vary the timeout per
+tool (or per resource/prompt) without touching the global setting. Return `None` for **no timeout** —
+the call then waits until the provider responds or disconnects:
+
+```python
+class MyChannel(Channel):
+    def call_timeout_seconds(self, method, params):
+        if method == "tools/call" and params.get("name") == "render_video":
+            return None          # wait as long as it takes
+
+        return super().call_timeout_seconds(method, params)
+
+class MyGateway(Gateway):
+    channel_class = MyChannel
+```
+
+The `GATEWAY_TOOL_CALL_TIMEOUT_SECONDS` setting is validated `> 0`, so the global default is always
+finite — only an override can opt a specific call out of the timeout.
 
 ## A complete extension
 

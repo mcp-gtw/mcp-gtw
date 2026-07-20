@@ -5,11 +5,11 @@ import time
 import pytest
 from support import FakeWebSocket
 
-from mcp_gtw import registry as registry_module
 from mcp_gtw.config import GatewaySettings
 from mcp_gtw.errors import ChannelCapacityError
 from mcp_gtw.listeners import GatewayListener
 from mcp_gtw.registry import ChannelRegistry
+from mcp_gtw.tokens import SecretsTokenProvider
 
 
 class RecordingListener(GatewayListener):
@@ -45,7 +45,6 @@ async def test_create_resolve_and_remove(settings: GatewaySettings) -> None:
     assert registry.resolve_provider_token(channel.provider_token) is channel
     assert registry.resolve_mcp_token(None) is None
     assert registry.resolve_mcp_token("nope") is None
-    assert registry.connected_provider_count == 0
 
     assert await registry.remove_channel(channel.channel_id) is True
     assert await registry.remove_channel(channel.channel_id) is False
@@ -67,6 +66,28 @@ async def test_create_channel_respects_maximum(settings: GatewaySettings) -> Non
 
     with pytest.raises(ChannelCapacityError, match="maximum number of channels"):
         await registry.create_channel()
+
+
+async def test_none_maximum_channels_is_unlimited(settings: GatewaySettings) -> None:
+    registry = ChannelRegistry(settings.model_copy(update={"maximum_channels": None}))
+
+    for _ in range(5):
+        await registry.create_channel()
+
+    assert registry.channel_count == 5
+
+
+async def test_full_registry_keeps_existing_channels_intact(settings: GatewaySettings) -> None:
+    registry = ChannelRegistry(settings.model_copy(update={"maximum_channels": 2}))
+    first = await registry.create_channel()
+    second = await registry.create_channel()
+
+    with pytest.raises(ChannelCapacityError, match="maximum number of channels"):
+        await registry.create_channel()
+
+    assert registry.channel_count == 2
+    assert registry.resolve_provider_token(first.provider_token) is first
+    assert registry.resolve_mcp_token(second.mcp_token) is second
 
 
 async def test_provider_lifecycle_dispatch(settings: GatewaySettings) -> None:
@@ -116,8 +137,26 @@ async def test_connected_channel_is_never_reaped(settings: GatewaySettings) -> N
     assert registry.get(channel.channel_id) is channel
 
 
-async def test_admin_channels_hides_infinite_reclaim(settings: GatewaySettings) -> None:
+async def test_creation_time_tracking_is_admin_gated(settings: GatewaySettings) -> None:
+    disabled = ChannelRegistry(settings)
+    await disabled.create_channel()
+    assert disabled._created == {}
+
+    enabled = ChannelRegistry(settings.model_copy(update={"admin_enabled": True}))
+    channel = await enabled.create_channel()
+    assert list(enabled._created) == [channel.channel_id]
+
+
+async def test_admin_channels_tolerates_untracked_creation(settings: GatewaySettings) -> None:
     registry = ChannelRegistry(settings)
+    await registry.create_channel()
+
+    [entry] = registry.admin_channels()
+    assert entry["ageSeconds"] is None
+
+
+async def test_admin_channels_hides_infinite_reclaim(settings: GatewaySettings) -> None:
+    registry = ChannelRegistry(settings.model_copy(update={"admin_enabled": True}))
     channel = await registry.create_channel()
     websocket = FakeWebSocket()
     await channel.attach(websocket, provider_id="p", provider_name=None)
@@ -228,11 +267,26 @@ async def test_close_all(settings: GatewaySettings) -> None:
     assert registry.channel_count == 0
 
 
-def test_unique_token_retries_on_collision(
-    settings: GatewaySettings, monkeypatch: pytest.MonkeyPatch
-) -> None:
+class ScriptedTokenProvider(SecretsTokenProvider):
+    def __init__(self, values: list[str]) -> None:
+        self._values = iter(values)
+
+    def generate(self, nbytes: int = 32) -> str:
+        return next(self._values)
+
+
+def test_unique_token_retries_on_collision(settings: GatewaySettings) -> None:
+    registry = ChannelRegistry(settings, tokens=ScriptedTokenProvider(["taken", "fresh"]))
+    registry._by_provider_token["taken"] = "chan"
+    assert registry._unique_token() == "fresh"
+
+
+async def test_create_channel_rejects_cross_index_token(settings: GatewaySettings) -> None:
     registry = ChannelRegistry(settings)
-    index = {"taken": "chan"}
-    tokens = iter(["taken", "fresh"])
-    monkeypatch.setattr(registry_module, "generate_token", lambda *_: next(tokens))
-    assert registry._unique_token(index) == "fresh"
+    existing = await registry.create_channel()
+
+    with pytest.raises(ChannelCapacityError, match="same token"):
+        await registry.create_channel(mcp_token=existing.provider_token)
+
+    with pytest.raises(ChannelCapacityError, match="same token"):
+        await registry.create_channel(provider_token=existing.mcp_token)

@@ -52,6 +52,17 @@ uv run python -m mcp_gtw.main
 This publishes a real MCP endpoint at `/mcp`, a private provider WebSocket at `/provider` and a health
 check at `/health`. It exposes whatever capabilities the connected provider registers.
 
+## ☁️ One-click deploy
+
+The image runs production-ready as a non-root process. Deploy it to any host that keeps a persistent
+server (the `/provider` WebSocket needs one — serverless like Vercel does not work):
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/mcp-gtw/mcp-gtw)
+
+Render, Railway and Fly.io run the [`Dockerfile`](Dockerfile) as-is (they inject `PORT`, which the
+gateway reads); on a VPS (Hostinger, …) use Docker Compose. Full guide, including reverse proxy and
+TLS: [deployment](docs/deployment.md).
+
 ## 🧩 Extending it
 
 Subclass `Gateway` and override the hooks to attach your own domain logic:
@@ -73,8 +84,11 @@ class MyGateway(Gateway):
 app = MyGateway().create_app()
 ```
 
-See the [Gateway library](docs/gateway-library.md) guide for every override point and a worked
-example of building your own extension.
+Every behaviour is a swappable strategy with a secure default — authentication, tokens, origins,
+expiry and the wire codec. Change one by setting a `*_class` attribute or injecting an instance,
+without touching the transport. See the [Gateway library](docs/gateway-library.md) guide for every
+override point, [Extensibility](docs/extensibility.md) for the strategy contracts, and
+[Auth recipes](docs/auth-recipes.md) for token, username/password and client-supplied-token models.
 
 ## 📚 Documentation
 
@@ -83,6 +97,8 @@ example of building your own extension.
 | [Architecture](docs/architecture.md) | Components, transports and request flows. |
 | [Quick start](docs/quickstart.md) | Install, run and connect an MCP client. |
 | [Gateway library](docs/gateway-library.md) | The `Gateway` class and every override point. |
+| [Extensibility](docs/extensibility.md) | The swappable strategies, their contracts and the invariants. |
+| [Auth recipes](docs/auth-recipes.md) | Token, username/password and client-supplied-token models. |
 | [Configuration](docs/configuration.md) | Every setting and environment variable. |
 | [Provider protocol](docs/provider-protocol.md) | The private gateway ⇄ provider message protocol. |
 | [Provider SDK](docs/provider-sdk.md) | Writing the JavaScript provider and registering tools. |

@@ -39,52 +39,91 @@ This repo is published to PyPI as `mcp-gtw` (the import package stays `mcp_gtw`)
   npm package (`registerTool`/`registerResource`/`registerResourceTemplate`/`registerPrompt`,
   `onComplete`/`onSubscribe`, `notifyResourceUpdated`, `log`, `requestSampling`/`requestElicit`).
   Usage guide in [docs/provider-sdk.md](docs/provider-sdk.md).
-- **Extending** — subclass `Gateway`, override the hooks, swap `channel_class`/`registry_class`/
-  `settings_class`. Every override point: [docs/gateway-library.md](docs/gateway-library.md).
+- **Extending** — `Gateway` is a composition root. Every behaviour is a swappable strategy with a
+  secure default, changed by a `*_class` attribute or an `__init__` instance:
+  `token_provider_class` (`TokenProvider`), `origin_policy_class` (`OriginPolicy`),
+  `expiry_policy_class` (`ExpiryPolicy`), `codec_class` (`ProtocolCodec`), `authenticator_class`
+  (`Authenticator`), plus `channel_class`/`registry_class`/`settings_class`. Contracts + invariants:
+  [docs/extensibility.md](docs/extensibility.md); override points:
+  [docs/gateway-library.md](docs/gateway-library.md).
+- **Authentication** — who may open a channel is the `Authenticator` seam (default `TokenAuthenticator`
+  admits known tokens). Recipes for the token model, a client-supplied token from `localStorage`, and
+  username/password: [docs/auth-recipes.md](docs/auth-recipes.md). `create_channel` accepts injected
+  `provider_token`/`mcp_token` so an authenticator can honour a client's or a derived token.
 - **Configuration** — all `GATEWAY_*` env vars (or `.env`) map to `GatewaySettings`. Lists are comma
   separated (`NoDecode`, not JSON). Numeric limits/timeouts are validated positive and `port` is
-  bounded, so a bad value fails at startup. Table: [docs/configuration.md](docs/configuration.md).
+  bounded, so a bad value fails at startup. `port` also reads the platform-standard `PORT`
+  (`GATEWAY_PORT` wins) so PaaS one-click deploys just work. Table:
+  [docs/configuration.md](docs/configuration.md).
 - **Runtime, limits & performance** — everything runs on one event loop and is fully async, with no
-  blocking IO on request/websocket paths. Tool validators are compiled once at registration, not per
-  call. A channel holds at most one live provider socket (a new connection atomically replaces the
-  old); channels are capped by `maximum_channels` (checked before allocation); every externally-fed
-  collection (pending calls, remembered sessions, tools) is bounded. The bundled runner
+  blocking IO on request/websocket paths. Every per-request/per-connection hot path is O(1): token
+  resolution is a dict lookup, the origin check is a `frozenset` membership, tool dispatch is a dict
+  lookup, so it scales to many thousands of channels and connections. Tool validators are compiled
+  once at registration, not per call. A channel holds at most one live provider socket (a new
+  connection atomically replaces the old). The **capacity** limits (`maximum_channels`, `maximum_tools`,
+  `maximum_tool_definition_bytes`, pending calls, remembered sessions, subscriptions,
+  `maximum_concurrent_connections`, `tool_call_timeout_seconds`) are operator policy: bounded by a safe
+  default, and each accepts an empty value (`None`) to mean unlimited — the enforcement is guarded by
+  an `is not None` check, secure by default, unlimited by choice. The two **process-safety** limits
+  (`maximum_websocket_message_bytes`, `maximum_json_depth`) are always enforced and cannot be disabled,
+  so a single frame can never exhaust memory or the stack. The bundled runner
   (`python -m mcp_gtw.main`) sets the transport frame limit (`ws_max_size`) to
   `maximum_websocket_message_bytes` and applies `maximum_concurrent_connections` — so run it that way
   in production, not bare `uvicorn`. Details: [docs/security.md](docs/security.md).
-- **Admin dashboard** — off by default. `GATEWAY_ADMIN_ENABLED=true` registers `/admin` and
-  `/admin/stats`, gated by `GATEWAY_ADMIN_KEY` (required — enabling admin without it raises
-  `GatewayConfigurationError` at construction). Details: [docs/admin.md](docs/admin.md).
+- **Admin dashboard** — off by default and fully inert when off: the `/admin` and `/admin/stats`
+  routes are not registered, and the registry does not even track per-channel creation time (the
+  only state that exists solely for the dashboard's `ageSeconds`). `GATEWAY_ADMIN_ENABLED=true`
+  registers the routes, gated by `GATEWAY_ADMIN_KEY` (required non-empty — enabling admin with an
+  empty or unset key raises `GatewayConfigurationError` at construction). `GATEWAY_ADMIN_PATH` (default
+  `/admin`) relocates the dashboard and its `<path>/stats` API off the default so it cannot be guessed
+  (a value colliding with a built-in route raises `GatewayConfigurationError`). The stats payload
+  carries the version only when `GATEWAY_EXPOSE_VERSION=true`. Details: [docs/admin.md](docs/admin.md).
 - **Security** — trust boundaries, the two tokens, origin checks, WebSocket robustness, resource
-  limits: [docs/security.md](docs/security.md).
+  limits, and version fingerprinting (the version is off the HTTP surface unless
+  `GATEWAY_EXPOSE_VERSION=true`): [docs/security.md](docs/security.md).
 - **Browser console** — turn any open page into a provider from DevTools (a `/sessions` subclass, an
   origin `*`, a paste-in snippet), plus the CSP/mixed-content caveats:
   [docs/browser-console.md](docs/browser-console.md).
-- **Quickstart / MCP clients / testing / deployment** — [docs/quickstart.md](docs/quickstart.md),
-  [docs/mcp-clients.md](docs/mcp-clients.md), [docs/testing.md](docs/testing.md),
+- **Deployment** — the `Dockerfile` runs production-ready as a non-root process binding `0.0.0.0`
+  through the bundled runner. A `render.yaml` Blueprint + README button give one-click deploy; any
+  persistent-server host (Render/Railway/Fly/VPS) works, serverless does not. Full guide:
   [docs/deployment.md](docs/deployment.md).
+- **Quickstart / MCP clients / testing** — [docs/quickstart.md](docs/quickstart.md),
+  [docs/mcp-clients.md](docs/mcp-clients.md), [docs/testing.md](docs/testing.md).
 
 ## Key modules (`src/mcp_gtw/`)
 
-- `gateway.py` — the `Gateway` class: FastAPI app factory, CORS, routes (`/mcp`, `/provider`,
-  `/health`, `/`, `/logo.svg`, optional `/admin`), the `/mcp` ASGI wrapper, the `/provider` websocket
-  pump, the admin dashboard, and the lifespan (session manager + reaper + `serve`).
+- `gateway.py` — the `Gateway` class, the composition root: it wires the strategies below, is the
+  FastAPI app factory, CORS, routes (`/mcp`, `/provider`, `/health`, `/`, `/logo.svg`, optional
+  admin at `GATEWAY_ADMIN_PATH`), the `/mcp` ASGI wrapper, the `/provider` websocket pump, the admin dashboard, and the
+  lifespan (session manager + reaper + `serve`). Endpoints delegate every decision to a strategy.
 - `channel.py` — `Channel`: attach/detach a provider, compile/replace the registries (tools,
   resources, resource templates, prompts), relay a request to the provider (correlate a `Future` over
-  the WebSocket with timeout), run reverse `call`s against the client, fan out notifications
-  (progress, logging, resource-updated), validate output, notify MCP sessions.
-- `registry.py` — `ChannelRegistry`: create/remove/resolve channels, expiry, `admin_channels`.
-- `protocol.py` — private message builders and `decode_message` (depth-bounded JSON parse).
+  the WebSocket, timed out by `call_timeout_seconds(method, params)` — overridable per tool, `None`
+  disables it), run reverse `call`s against the client, fan out notifications (progress, logging,
+  resource-updated), validate output, notify MCP sessions, and replay client subscriptions to a
+  reconnected provider (`resync_subscriptions`).
+- `registry.py` — `ChannelRegistry`: create/remove/resolve channels (create accepts injected tokens),
+  `admin_channels`; delegates token minting to a `TokenProvider` and deadline math to an `ExpiryPolicy`.
+- `authenticator.py` — `Authenticator` + default `TokenAuthenticator` (maps a connection to a channel
+  or denies it); `extract_bearer_token` lives here.
+- `tokens.py` — `TokenProvider` + default `SecretsTokenProvider` (generate + constant-time compare).
+- `origin.py` — `OriginPolicy` + default `ListOriginPolicy` (list membership + `*`).
+- `expiry.py` — `ExpiryPolicy` + default `TtlExpiryPolicy` (offline-TTL reclamation math).
+- `codec.py` — `ProtocolCodec` + default `JsonProtocolCodec` (depth-bounded JSON parse).
+- `protocol.py` — private message builders and the wire vocabulary constants (no parsing).
+- `compiled_tool.py` / `pending_request.py` / `json_websocket.py` — the channel's value types.
 - `config.py` — `GatewaySettings` (pydantic-settings, env prefix `GATEWAY_`).
-- `helpers/security.py` — token generation, bearer extraction, origin check, constant-time compare.
 - `listeners.py` — `GatewayListener` hook interface that `Gateway` implements.
+- `main.py` — the bundled runner: builds the default `Gateway().create_app()` and runs uvicorn with
+  the transport limits (`ws_max_size`, `limit_concurrency`). This is the production entrypoint.
 
 ## Module organization
 
-- One public class per module, plus its small private support types (`channel.py` keeps
-  `CompiledTool`, `PendingRequest`, `JsonWebSocket`).
+- **One class per module.** Each strategy (its abstract base + the shipped default), each value type
+  (`CompiledTool`, `PendingRequest`, `JsonWebSocket`) and each domain class lives in its own file.
+  Strategies get an abstract base; value types are plain dataclasses/`Protocol` with no base.
 - `errors.py` is the exceptions module (the whole hierarchy lives there).
-- Pure utility functions live under `helpers/`.
 - Every `__init__.py` is empty, so import from the concrete submodule.
 
 ## Conventions
@@ -143,9 +182,9 @@ change. Treat a doc that describes something the code no longer does as a bug.
 
 ## Gotchas
 
-- `.env` and `.env.example` are under a hard permission deny rule here (Read, Edit, Bash, and Write
-  all fail). The file is effectively immutable in this environment — make `config.py` and
-  `docs/configuration.md` the source of truth and flag any drift to the user.
+- `.env.example` lists every `GATEWAY_*` setting (commented, with defaults). When you add or change a
+  setting in `config.py`, update `.env.example` and `docs/configuration.md` in the same change so the
+  three never drift.
 - The home page reads `web/index.html` at import and `str.format`s `{name}`/`{initial}` — keep that
   file free of other `{`/`}`. `web/admin.html` is served raw (its JS braces are fine).
 - Package data (`web/*.html`, `web/logo.svg`, `py.typed`) must ship in the wheel — hatchling includes

@@ -69,6 +69,7 @@
         <script>
             const key = new URLSearchParams(location.search).get("key");
             const withKey = (url) => (key ? `${url}?key=${encodeURIComponent(key)}` : url);
+            const statsUrl = `${location.pathname.replace(/\/+$/, "")}/stats`;
 
             function setStatus(text, ok) {
                 $("#status")
@@ -87,7 +88,7 @@
 
             function render(data) {
                 $("#app-name").text(data.app.name);
-                $("#app-version").text(`v${data.app.version}`);
+                $("#app-version").text(data.app.version ? `v${data.app.version}` : "");
                 $("#t-channels").text(data.totals.channels);
                 $("#t-providers").text(data.totals.providersConnected);
                 $("#t-tools").text(data.totals.tools);
@@ -119,7 +120,7 @@
             }
 
             function load() {
-                $.getJSON(withKey("/admin/stats"))
+                $.getJSON(withKey(statsUrl))
                     .done((data) => {
                         setStatus("connected", true);
                         render(data);

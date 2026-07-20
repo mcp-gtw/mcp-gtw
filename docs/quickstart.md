@@ -62,5 +62,5 @@ curl http://127.0.0.1:8000/health
 ```
 
 ```json
-{ "status": "ok", "channels": 0, "providersConnected": 0 }
+{ "status": "ok", "channels": 0 }
 ```

@@ -21,7 +21,9 @@ from starlette.requests import Request
 from starlette.types import Receive, Scope, Send
 
 from mcp_gtw import protocol
+from mcp_gtw.authenticator import Authenticator, TokenAuthenticator
 from mcp_gtw.channel import Channel
+from mcp_gtw.codec import JsonProtocolCodec, ProtocolCodec
 from mcp_gtw.config import PROTOCOL_VERSION, GatewaySettings
 from mcp_gtw.errors import (
     ChannelOfflineError,
@@ -30,18 +32,18 @@ from mcp_gtw.errors import (
     GatewayError,
     ProviderMessageError,
 )
-from mcp_gtw.helpers.security import (
-    constant_time_equals,
-    extract_bearer_token,
-    generate_token,
-    origin_is_allowed,
-)
+from mcp_gtw.expiry import ExpiryPolicy, TtlExpiryPolicy
 from mcp_gtw.listeners import GatewayListener
+from mcp_gtw.origin import ListOriginPolicy, OriginPolicy
 from mcp_gtw.registry import ChannelRegistry
+from mcp_gtw.tokens import SecretsTokenProvider, TokenProvider
 
 logger = logging.getLogger(__name__)
 
 SCOPE_CHANNEL_KEY = "gateway_channel_id"
+
+_RESERVED_ROUTE_PATHS = frozenset({"/", "/health", "/provider", "/logo.svg"})
+_MCP_MOUNT_PATH = "/mcp"
 
 _WEB_DIR = Path(__file__).parent / "web"
 _HOME_TEMPLATE = (_WEB_DIR / "index.html").read_text(encoding="utf-8")
@@ -50,31 +52,64 @@ _HOME_TEMPLATE = (_WEB_DIR / "index.html").read_text(encoding="utf-8")
 class Gateway(GatewayListener):
     """A generic MCP gateway that relays dynamic MCP capabilities between clients and providers.
 
-    Subclass it to build a real application. Override the lifecycle hooks to attach
-    domain state, override ``serve`` to run background tasks, and override
-    ``register_routes`` or ``home`` to add your own HTTP surface. Swap ``channel_class``
-    or ``registry_class`` to customize how sessions are stored.
+    It is a composition root: every behaviour is a swappable strategy. Set a ``*_class``
+    attribute on a subclass to change the default, or pass a built instance to ``__init__``
+    for dependency injection. Override the lifecycle hooks to attach domain state, ``serve``
+    to run background tasks, and ``register_routes`` or ``home`` to add your own HTTP surface.
     """
 
     settings_class: type[GatewaySettings] = GatewaySettings
     registry_class: type[ChannelRegistry] = ChannelRegistry
     channel_class: type[Channel] = Channel
+    token_provider_class: type[TokenProvider] = SecretsTokenProvider
+    origin_policy_class: type[OriginPolicy] = ListOriginPolicy
+    expiry_policy_class: type[ExpiryPolicy] = TtlExpiryPolicy
+    codec_class: type[ProtocolCodec] = JsonProtocolCodec
+    authenticator_class: type[Authenticator] = TokenAuthenticator
 
     mcp_server_name: str = "mcp-gtw"
 
-    def __init__(self, settings: GatewaySettings | None = None) -> None:
+    def __init__(
+        self,
+        settings: GatewaySettings | None = None,
+        *,
+        tokens: TokenProvider | None = None,
+        codec: ProtocolCodec | None = None,
+        provider_origins: OriginPolicy | None = None,
+        mcp_origins: OriginPolicy | None = None,
+        expiry_policy: ExpiryPolicy | None = None,
+        registry: ChannelRegistry | None = None,
+        authenticator: Authenticator | None = None,
+    ) -> None:
         self.settings = settings or self.settings_class()
 
-        if self.settings.admin_enabled and self.settings.admin_key is None:
+        if self.settings.admin_enabled and not self.settings.admin_key:
             raise GatewayConfigurationError(
-                "GATEWAY_ADMIN_KEY must be set when GATEWAY_ADMIN_ENABLED is true"
+                "GATEWAY_ADMIN_KEY must be a non-empty value when GATEWAY_ADMIN_ENABLED is true"
             )
 
-        self.registry = self.registry_class(
-            self.settings,
-            listeners=[self],
-            channel_class=self.channel_class,
+        if self.settings.admin_enabled and self._admin_path_conflicts(self.settings.admin_path):
+            raise GatewayConfigurationError(
+                f"GATEWAY_ADMIN_PATH {self.settings.admin_path!r} collides with a built-in route"
+            )
+
+        self.tokens = tokens or self.token_provider_class()
+        self.codec = codec or self.codec_class(self.settings.maximum_json_depth)
+        self.provider_origins = provider_origins or self.origin_policy_class(
+            self.settings.allowed_provider_origins
         )
+        self.mcp_origins = mcp_origins or self.origin_policy_class(
+            self.settings.allowed_mcp_origins
+        )
+        self.registry = registry or self.registry_class(
+            self.settings,
+            channel_class=self.channel_class,
+            tokens=self.tokens,
+            expiry_policy=expiry_policy
+            or self.expiry_policy_class(self.settings.offline_ttl_seconds),
+        )
+        self.registry.add_listener(self)
+        self.authenticator = authenticator or self.authenticator_class(self.registry)
         self.server = self._build_server()
         self.manager = self._build_manager()
         self._home_html = _HOME_TEMPLATE.format(
@@ -86,11 +121,11 @@ class Gateway(GatewayListener):
         return await self.registry.create_channel(**kwargs)
 
     def create_app(self) -> FastAPI:
-        app = FastAPI(
-            title=self.settings.app_name,
-            version=self.settings.app_version,
-            lifespan=self.lifespan,
-        )
+        app = FastAPI(title=self.settings.app_name, lifespan=self.lifespan)
+
+        if self.settings.expose_version:
+            app.version = self.settings.app_version
+
         app.state.gateway = self
         self.add_cors(app)
         self.register_routes(app)
@@ -112,8 +147,17 @@ class Gateway(GatewayListener):
         app.mount("/mcp", self.mcp_asgi)
 
         if self.settings.admin_enabled:
-            app.add_api_route("/admin", self.admin_page, methods=["GET"], include_in_schema=False)
-            app.add_api_route("/admin/stats", self.admin_stats_endpoint, methods=["GET"])
+            admin_path = self.settings.admin_path
+            app.add_api_route(admin_path, self.admin_page, methods=["GET"], include_in_schema=False)
+            app.add_api_route(f"{admin_path}/stats", self.admin_stats_endpoint, methods=["GET"])
+
+    @staticmethod
+    def _admin_path_conflicts(path: str) -> bool:
+        return (
+            path in _RESERVED_ROUTE_PATHS
+            or path == _MCP_MOUNT_PATH
+            or path.startswith(f"{_MCP_MOUNT_PATH}/")
+        )
 
     async def home(self) -> Response:
         return HTMLResponse(self._home_html)
@@ -122,11 +166,7 @@ class Gateway(GatewayListener):
         return FileResponse(_WEB_DIR / "logo.svg", media_type="image/svg+xml")
 
     async def health(self) -> dict[str, Any]:
-        return {
-            "status": "ok",
-            "channels": self.registry.channel_count,
-            "providersConnected": self.registry.connected_provider_count,
-        }
+        return {"status": "ok", "channels": self.registry.channel_count}
 
     async def admin_page(self, request: Request) -> FileResponse:
         self._require_admin(request)
@@ -138,8 +178,13 @@ class Gateway(GatewayListener):
 
     def admin_stats(self) -> dict[str, Any]:
         channels = self.registry.admin_channels()
+        app: dict[str, Any] = {"name": self.settings.app_name}
+
+        if self.settings.expose_version:
+            app["version"] = self.settings.app_version
+
         return {
-            "app": {"name": self.settings.app_name, "version": self.settings.app_version},
+            "app": app,
             "totals": {
                 "channels": len(channels),
                 "providersConnected": sum(1 for c in channels if c["providerConnected"]),
@@ -150,7 +195,7 @@ class Gateway(GatewayListener):
         }
 
     def _require_admin(self, request: Request) -> None:
-        if not constant_time_equals(request.query_params.get("key"), self.settings.admin_key):
+        if not self.tokens.equals(request.query_params.get("key"), self.settings.admin_key):
             raise HTTPException(status_code=403, detail="Invalid admin key")
 
     def instructions(self) -> str:
@@ -306,8 +351,11 @@ class Gateway(GatewayListener):
 
         request = Request(scope)
 
-        token = extract_bearer_token(request.headers.get("authorization"))
-        channel = self.registry.resolve_mcp_token(token)
+        if not self.mcp_origins.allows(request.headers.get("origin")):
+            await self._json_response(send, 403, {"error": "Origin not allowed"})
+            return
+
+        channel = await self.authenticator.authenticate_client(request)
 
         if channel is None:
             await self._json_response(
@@ -324,27 +372,21 @@ class Gateway(GatewayListener):
             await self._json_response(send, 404, {"error": "Unknown MCP service"})
             return
 
-        if not origin_is_allowed(request.headers.get("origin"), self.settings.allowed_mcp_origins):
-            await self._json_response(send, 403, {"error": "Origin not allowed"})
-            return
-
         scope[SCOPE_CHANNEL_KEY] = channel.channel_id
         await self.manager.handle_request(scope, receive, send)
 
     async def provider_endpoint(self, websocket: WebSocket) -> None:
-        channel = self.registry.resolve_provider_token(websocket.query_params.get("token"))
+        if not self.provider_origins.allows(websocket.headers.get("origin")):
+            await websocket.close(code=1008, reason="Origin not allowed")
+            return
+
+        channel = await self.authenticator.authenticate_provider(websocket)
 
         if channel is None:
             await websocket.close(code=1008, reason="Invalid channel token")
             return
 
-        origin = websocket.headers.get("origin")
-
-        if not origin_is_allowed(origin, self.settings.allowed_provider_origins):
-            await websocket.close(code=1008, reason="Origin not allowed")
-            return
-
-        provider_id = websocket.query_params.get("providerId") or generate_token(12)
+        provider_id = websocket.query_params.get("providerId") or self.tokens.generate(12)
         provider_name = websocket.query_params.get("providerName")
 
         await websocket.accept()
@@ -353,6 +395,7 @@ class Gateway(GatewayListener):
 
         try:
             await channel.send_to_provider(protocol.hello_ack(PROTOCOL_VERSION, channel.channel_id))
+            await channel.resync_subscriptions()
             await self._pump_provider_messages(websocket, channel)
         except WebSocketDisconnect:
             logger.info("Provider websocket disconnected: channel=%s", channel.channel_id)
@@ -370,30 +413,31 @@ class Gateway(GatewayListener):
                 raise WebSocketDisconnect(code=message.get("code", 1005))
 
             text = message.get("text")
+            payload = text if text is not None else message.get("bytes")
 
-            if text is not None and self._message_too_large(text):
+            if payload is not None and self._message_too_large(payload):
                 await websocket.close(code=1009, reason="Message too large")
                 return
 
             try:
-                await self._handle_provider_frame(channel, text)
+                await self._handle_provider_frame(websocket, channel, text)
             except (ChannelOfflineError, ChannelReplacedError):
                 return
 
-    def _message_too_large(self, text: str) -> bool:
+    def _message_too_large(self, payload: str | bytes) -> bool:
         maximum = self.settings.maximum_websocket_message_bytes
-        return len(text) > maximum or len(text.encode()) > maximum
 
-    async def _handle_provider_frame(self, channel: Channel, text: str | None) -> None:
-        if text is None:
-            await channel.send_to_provider(
-                protocol.protocol_error("Only text messages are supported")
-            )
-            return
+        if isinstance(payload, str):
+            return len(payload) > maximum or len(payload.encode()) > maximum
 
+        return len(payload) > maximum
+
+    async def _handle_provider_frame(
+        self, websocket: WebSocket, channel: Channel, text: str | None
+    ) -> None:
         try:
-            payload = protocol.decode_message(text, self.settings.maximum_json_depth)
-            await channel.handle_provider_message(payload)
+            payload = self.codec.decode(text)
+            await channel.handle_provider_message(websocket, payload)
         except (ValueError, ProviderMessageError) as exc:
             await channel.send_to_provider(protocol.protocol_error(str(exc)))
 

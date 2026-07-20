@@ -9,13 +9,14 @@ import logging
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any
 
 import mcp.types as types
 from jsonschema import Draft202012Validator, ValidationError
 from mcp.server.lowlevel.helper_types import ReadResourceContents
 
 from mcp_gtw import protocol
+from mcp_gtw.compiled_tool import CompiledTool
 from mcp_gtw.config import GatewaySettings
 from mcp_gtw.errors import (
     ChannelOfflineError,
@@ -23,6 +24,8 @@ from mcp_gtw.errors import (
     ProviderMessageError,
     ProviderRequestError,
 )
+from mcp_gtw.json_websocket import JsonWebSocket
+from mcp_gtw.pending_request import PendingRequest
 
 logger = logging.getLogger(__name__)
 
@@ -38,26 +41,6 @@ _ALL_LIST_CHANGED = (
     "send_prompt_list_changed",
 )
 _LOG_LEVELS = ("debug", "info", "notice", "warning", "error", "critical", "alert", "emergency")
-
-
-class JsonWebSocket(Protocol):
-    async def send_json(self, data: Any) -> None: ...
-
-    async def close(self, code: int = 1000, reason: str | None = None) -> None: ...
-
-
-@dataclass(slots=True)
-class CompiledTool:
-    definition: types.Tool
-    input_validator: Draft202012Validator
-    output_validator: Draft202012Validator | None
-
-
-@dataclass(slots=True)
-class PendingRequest:
-    future: asyncio.Future[Any]
-    session: Any | None = None
-    progress_token: str | int | None = None
 
 
 @dataclass(slots=True)
@@ -173,12 +156,19 @@ class Channel:
     def remember_mcp_session(self, session: Any) -> None:
         key = id(session)
         self._mcp_sessions.pop(key, None)
-        self._mcp_sessions[key] = session
+        self._mcp_sessions[key] = session  # re-insert to move it to the most-recently-used position
 
-        while len(self._mcp_sessions) > self.settings.maximum_mcp_sessions_per_channel:
+        maximum_sessions = self.settings.maximum_mcp_sessions_per_channel
+
+        while maximum_sessions is not None and len(self._mcp_sessions) > maximum_sessions:
             oldest = next(iter(self._mcp_sessions))
             del self._mcp_sessions[oldest]
             self._forget_session(oldest)
+
+    def _drop_sessions(self, keys: list[int]) -> None:
+        for key in keys:
+            self._mcp_sessions.pop(key, None)
+            self._forget_session(key)
 
     async def _notify(self, methods: tuple[str, ...]) -> None:
         dead: list[int] = []
@@ -191,9 +181,7 @@ class Channel:
                 logger.debug("Dropping inactive MCP session", exc_info=True)
                 dead.append(key)
 
-        for key in dead:
-            self._mcp_sessions.pop(key, None)
-            self._forget_session(key)
+        self._drop_sessions(dead)
 
     async def register(self, registry: str, items: list[dict[str, Any]]) -> None:
         if registry == protocol.TOOLS:
@@ -225,15 +213,22 @@ class Channel:
         await self._notify(_LIST_CHANGED[registry])
 
     def _guard_size(self, item: dict[str, Any], label: str) -> None:
+        maximum = self.settings.maximum_tool_definition_bytes
+
+        if maximum is None:
+            return
+
         encoded = json.dumps(item, ensure_ascii=False, separators=(",", ":")).encode()
 
-        if len(encoded) > self.settings.maximum_tool_definition_bytes:
+        if len(encoded) > maximum:
             raise ProviderMessageError(f"{label} exceeds the configured maximum size")
 
     def _guard_count(self, items: list[dict[str, Any]], label: str) -> None:
-        if len(items) > self.settings.maximum_tools:
+        maximum = self.settings.maximum_tools
+
+        if maximum is not None and len(items) > maximum:
             raise ProviderMessageError(
-                f"Too many {label}: received {len(items)}, maximum is {self.settings.maximum_tools}"
+                f"Too many {label}: received {len(items)}, maximum is {maximum}"
             )
 
     def _compile_tools(self, raw_tools: list[dict[str, Any]]) -> dict[str, CompiledTool]:
@@ -361,7 +356,13 @@ class Channel:
             session=session,
             progress_token=progress_token,
         )
-        return types.GetPromptResult.model_validate(raw)
+
+        try:
+            return types.GetPromptResult.model_validate(raw)
+        except Exception as exc:
+            raise ProviderRequestError(
+                f"Provider returned an invalid prompt result: {exc}"
+            ) from exc
 
     async def complete(
         self, ref: dict[str, Any], argument: dict[str, Any], context: dict[str, Any] | None
@@ -369,11 +370,37 @@ class Channel:
         raw = await self._call_provider(
             protocol.COMPLETE, {"ref": ref, "argument": argument, "context": context}
         )
-        return types.Completion.model_validate(raw)
+
+        try:
+            return types.Completion.model_validate(raw)
+        except Exception as exc:
+            raise ProviderRequestError(
+                f"Provider returned an invalid completion result: {exc}"
+            ) from exc
 
     async def subscribe(self, uri: str, session: Any) -> None:
-        await self._call_provider(protocol.SUBSCRIBE, {"uri": uri})
-        self._subscriptions.setdefault(uri, set()).add(id(session))
+        maximum_subscriptions = self.settings.maximum_subscriptions_per_channel
+
+        if (
+            maximum_subscriptions is not None
+            and uri not in self._subscriptions
+            and len(self._subscriptions) >= maximum_subscriptions
+        ):
+            raise ProviderRequestError("Too many resource subscriptions for this channel")
+
+        subscribers = self._subscriptions.setdefault(uri, set())
+        subscribers.add(id(session))
+        subscribed = False
+
+        try:
+            await self._call_provider(protocol.SUBSCRIBE, {"uri": uri})
+            subscribed = True
+        finally:
+            if not subscribed:
+                subscribers.discard(id(session))
+
+                if not subscribers and self._subscriptions.get(uri) is subscribers:
+                    del self._subscriptions[uri]
 
     async def unsubscribe(self, uri: str, session: Any) -> None:
         await self._call_provider(protocol.UNSUBSCRIBE, {"uri": uri})
@@ -384,6 +411,15 @@ class Channel:
 
             if not subscribers:
                 del self._subscriptions[uri]
+
+    async def resync_subscriptions(self) -> None:
+        for uri in list(self._subscriptions):
+            await self.send_to_provider(
+                protocol.request(uuid.uuid4().hex, protocol.SUBSCRIBE, {"uri": uri})
+            )
+
+    def call_timeout_seconds(self, method: str, params: dict[str, Any]) -> float | None:
+        return self.settings.tool_call_timeout_seconds
 
     async def _call_provider(
         self,
@@ -396,9 +432,12 @@ class Channel:
         if self._websocket is None:
             raise ProviderRequestError("The channel provider is offline")
 
-        if len(self._pending) >= self.settings.maximum_pending_calls_per_channel:
+        maximum_pending = self.settings.maximum_pending_calls_per_channel
+
+        if maximum_pending is not None and len(self._pending) >= maximum_pending:
             raise ProviderRequestError("Too many pending calls for this channel")
 
+        timeout = self.call_timeout_seconds(method, params)
         request_id = uuid.uuid4().hex
         future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
         self._pending[request_id] = PendingRequest(
@@ -407,10 +446,9 @@ class Channel:
 
         try:
             await self.send_to_provider(protocol.request(request_id, method, params))
-            return await asyncio.wait_for(future, timeout=self.settings.tool_call_timeout_seconds)
+            return await asyncio.wait_for(future, timeout=timeout)
         except TimeoutError:
             await self._best_effort_cancel(request_id, "timeout")
-            timeout = self.settings.tool_call_timeout_seconds
             raise ProviderRequestError(f"Request timed out after {timeout:g} seconds") from None
         except (ChannelOfflineError, ChannelReplacedError) as exc:
             raise ProviderRequestError(str(exc)) from exc
@@ -435,7 +473,12 @@ class Channel:
             except Exception as exc:
                 raise ChannelOfflineError("Failed to send to the channel provider") from exc
 
-    async def handle_provider_message(self, message: dict[str, Any]) -> None:
+    async def handle_provider_message(
+        self, websocket: JsonWebSocket, message: dict[str, Any]
+    ) -> None:
+        if websocket is not self._websocket:
+            raise ChannelOfflineError("The channel provider connection changed")
+
         message_type = message.get("type")
 
         if message_type == protocol.REGISTER:
@@ -576,7 +619,7 @@ class Channel:
             raise ProviderMessageError(f"Unsupported notification: {method!r}")
 
     async def _relay_progress(self, params: dict[str, Any]) -> None:
-        pending = self._pending.get(str(params.get("requestId")))
+        pending = self._pending.get(params["requestId"])
 
         if pending is None or pending.session is None or pending.progress_token is None:
             return
@@ -627,9 +670,7 @@ class Channel:
                 logger.debug("Dropping inactive MCP session", exc_info=True)
                 dead.append(key)
 
-        for key in dead:
-            self._mcp_sessions.pop(key, None)
-            self._forget_session(key)
+        self._drop_sessions(dead)
 
     def _forget_session(self, key: int) -> None:
         self._log_levels.pop(key, None)

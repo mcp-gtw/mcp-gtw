@@ -15,36 +15,11 @@ from httpx import ASGITransport
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 from starlette.requests import Request
-from support import FakeWebSocket
+from support import FakeProviderWebSocket, FakeWebSocket
 
 from mcp_gtw.config import GatewaySettings
 from mcp_gtw.errors import GatewayConfigurationError, GatewayError
 from mcp_gtw.gateway import SCOPE_CHANNEL_KEY, Gateway
-
-
-class FakeBrowserWebSocket(FakeWebSocket):
-    def __init__(self, query_params: dict[str, str], headers: dict[str, str]) -> None:
-        super().__init__()
-        self.query_params = query_params
-        self.headers = headers
-        self.accepted = False
-        self._incoming: list[dict[str, Any]] = []
-
-    def queue(self, *messages: str) -> None:
-        for message in messages:
-            self._incoming.append({"type": "websocket.receive", "text": message})
-
-    def queue_bytes(self, payload: bytes) -> None:
-        self._incoming.append({"type": "websocket.receive", "bytes": payload})
-
-    async def accept(self) -> None:
-        self.accepted = True
-
-    async def receive(self) -> dict[str, Any]:
-        if self._incoming:
-            return self._incoming.pop(0)
-
-        return {"type": "websocket.disconnect", "code": 1005}
 
 
 class SignallingWebSocket(FakeWebSocket):
@@ -72,6 +47,22 @@ def test_gateway_uses_defaults() -> None:
     app = gateway.create_app()
     assert isinstance(app, FastAPI)
     assert app.state.gateway is gateway
+
+
+def test_version_is_hidden_by_default(settings: GatewaySettings) -> None:
+    gateway = Gateway(settings)
+    app = gateway.create_app()
+
+    assert app.version != gateway.settings.app_version
+    assert "version" not in gateway.admin_stats()["app"]
+
+
+def test_version_is_exposed_when_enabled(settings: GatewaySettings) -> None:
+    gateway = Gateway(settings.model_copy(update={"expose_version": True}))
+    app = gateway.create_app()
+
+    assert app.version == gateway.settings.app_version
+    assert gateway.admin_stats()["app"]["version"] == gateway.settings.app_version
 
 
 def test_channel_for_scope(settings: GatewaySettings) -> None:
@@ -177,9 +168,49 @@ async def test_admin_dashboard_with_key(settings: GatewaySettings, move_tool: di
         assert isinstance(offline["reclaimInSeconds"], float)
 
 
+async def test_admin_dashboard_serves_at_a_custom_path(settings: GatewaySettings) -> None:
+    gateway = Gateway(
+        settings.model_copy(
+            update={"admin_enabled": True, "admin_key": "k3y", "admin_path": "/ops/secret"}
+        )
+    )
+    app = gateway.create_app()
+
+    async with asgi_client(app) as client:
+        assert (await client.get("/admin?key=k3y")).status_code == 404
+        assert (await client.get("/admin/stats?key=k3y")).status_code == 404
+
+        page = await client.get("/ops/secret?key=k3y")
+        assert page.status_code == 200
+        assert "text/html" in page.headers["content-type"]
+
+        stats = await client.get("/ops/secret/stats?key=k3y")
+        assert stats.status_code == 200
+        assert stats.json()["totals"]["channels"] == 0
+
+        assert (await client.get("/ops/secret?key=wrong")).status_code == 403
+
+
+async def test_admin_path_colliding_with_a_builtin_route_is_rejected(
+    settings: GatewaySettings,
+) -> None:
+    for path in ["/health", "/mcp", "/mcp/anything"]:
+        with pytest.raises(GatewayConfigurationError, match="GATEWAY_ADMIN_PATH"):
+            Gateway(
+                settings.model_copy(
+                    update={"admin_enabled": True, "admin_key": "k", "admin_path": path}
+                )
+            )
+
+
 async def test_admin_enabled_without_key_is_rejected(settings: GatewaySettings) -> None:
     with pytest.raises(GatewayConfigurationError, match="GATEWAY_ADMIN_KEY"):
         Gateway(settings.model_copy(update={"admin_enabled": True}))
+
+
+async def test_admin_enabled_with_empty_key_is_rejected(settings: GatewaySettings) -> None:
+    with pytest.raises(GatewayConfigurationError, match="GATEWAY_ADMIN_KEY"):
+        Gateway(settings.model_copy(update={"admin_enabled": True, "admin_key": ""}))
 
 
 async def test_admin_disabled_has_no_routes(settings: GatewaySettings) -> None:
@@ -358,14 +389,21 @@ async def test_full_resource_round_trip(settings: GatewaySettings) -> None:
 
 
 async def test_reaper_removes_expired_channels(settings: GatewaySettings) -> None:
-    gateway = Gateway(settings.model_copy(update={"reaper_interval_seconds": 0.01}))
+    removed = asyncio.Event()
+
+    class RecordingGateway(Gateway):
+        async def on_channel_removed(self, channel) -> None:
+            removed.set()
+
+    gateway = RecordingGateway(settings.model_copy(update={"reaper_interval_seconds": 0.001}))
     app = gateway.create_app()
 
     expired = await gateway.create_channel(ttl_seconds=-1)
 
     async with app.router.lifespan_context(app):
-        await asyncio.sleep(0.05)
-        assert gateway.registry.get(expired.channel_id) is None
+        await asyncio.wait_for(removed.wait(), timeout=2)
+
+    assert gateway.registry.get(expired.channel_id) is None
 
 
 async def test_provider_endpoint_full_flow(settings: GatewaySettings, move_tool: dict) -> None:
@@ -381,7 +419,7 @@ async def test_provider_endpoint_full_flow(settings: GatewaySettings, move_tool:
     gateway = RecordingGateway(settings)
     channel = await gateway.create_channel()
 
-    websocket = FakeBrowserWebSocket(
+    websocket = FakeProviderWebSocket(
         query_params={"token": channel.provider_token, "providerName": "demo"},
         headers={"origin": "http://testserver"},
     )
@@ -409,7 +447,7 @@ async def test_provider_endpoint_stops_when_channel_goes_offline(settings: Gatew
     gateway = Gateway(settings)
     channel = await gateway.create_channel()
 
-    class OfflineOnReceive(FakeBrowserWebSocket):
+    class OfflineOnReceive(FakeProviderWebSocket):
         async def receive(self) -> dict[str, Any]:
             channel._websocket = None
             return {"type": "websocket.receive", "text": json.dumps({"type": "ping"})}
@@ -429,7 +467,7 @@ async def test_provider_endpoint_survives_channel_error_before_pump(
     gateway = Gateway(settings)
     channel = await gateway.create_channel()
 
-    class FailingHello(FakeBrowserWebSocket):
+    class FailingHello(FakeProviderWebSocket):
         async def send_json(self, data: Any) -> None:
             raise RuntimeError("send failed")
 
@@ -444,7 +482,7 @@ async def test_provider_endpoint_survives_channel_error_before_pump(
 async def test_provider_endpoint_rejects_binary_frames(settings: GatewaySettings) -> None:
     gateway = Gateway(settings)
     channel = await gateway.create_channel()
-    websocket = FakeBrowserWebSocket(
+    websocket = FakeProviderWebSocket(
         query_params={"token": channel.provider_token},
         headers={"origin": "http://testserver"},
     )
@@ -454,9 +492,27 @@ async def test_provider_endpoint_rejects_binary_frames(settings: GatewaySettings
     assert websocket.last("protocol.error")["message"] == "Only text messages are supported"
 
 
+async def test_provider_endpoint_closes_oversized_binary_frame() -> None:
+    settings = GatewaySettings(
+        allowed_provider_origins=["http://testserver"],
+        maximum_websocket_message_bytes=32,
+    )
+    gateway = Gateway(settings)
+    channel = await gateway.create_channel()
+    websocket = FakeProviderWebSocket(
+        query_params={"token": channel.provider_token},
+        headers={"origin": "http://testserver"},
+    )
+    websocket.queue_bytes(b"\x00" * 128)
+
+    await gateway.provider_endpoint(websocket)
+    assert websocket.close_code == 1009
+
+
 async def test_reaper_survives_purge_errors(settings: GatewaySettings) -> None:
-    gateway = Gateway(settings.model_copy(update={"reaper_interval_seconds": 0.01}))
+    gateway = Gateway(settings.model_copy(update={"reaper_interval_seconds": 0.001}))
     calls = {"count": 0}
+    recovered = asyncio.Event()
 
     async def flaky_purge() -> int:
         calls["count"] += 1
@@ -464,20 +520,21 @@ async def test_reaper_survives_purge_errors(settings: GatewaySettings) -> None:
         if calls["count"] == 1:
             raise RuntimeError("transient failure")
 
+        recovered.set()
         return 0
 
     gateway.registry.purge_expired = flaky_purge
     app = gateway.create_app()
 
     async with app.router.lifespan_context(app):
-        await asyncio.sleep(0.05)
+        await asyncio.wait_for(recovered.wait(), timeout=2)
 
     assert calls["count"] >= 2
 
 
 async def test_provider_endpoint_rejects_invalid_token(settings: GatewaySettings) -> None:
     gateway = Gateway(settings)
-    websocket = FakeBrowserWebSocket(query_params={"token": "bad"}, headers={})
+    websocket = FakeProviderWebSocket(query_params={"token": "bad"}, headers={})
     await gateway.provider_endpoint(websocket)
     assert websocket.closed is True
     assert websocket.close_code == 1008
@@ -487,7 +544,7 @@ async def test_provider_endpoint_rejects_invalid_token(settings: GatewaySettings
 async def test_provider_endpoint_rejects_invalid_origin(settings: GatewaySettings) -> None:
     gateway = Gateway(settings)
     channel = await gateway.create_channel()
-    websocket = FakeBrowserWebSocket(
+    websocket = FakeProviderWebSocket(
         query_params={"token": channel.provider_token},
         headers={"origin": "http://evil"},
     )
@@ -503,7 +560,7 @@ async def test_provider_endpoint_closes_oversized_message() -> None:
     )
     gateway = Gateway(settings)
     channel = await gateway.create_channel()
-    websocket = FakeBrowserWebSocket(
+    websocket = FakeProviderWebSocket(
         query_params={"token": channel.provider_token},
         headers={"origin": "http://testserver"},
     )
@@ -524,7 +581,7 @@ async def test_provider_endpoint_skips_disconnect_when_replaced(settings: Gatewa
     channel = await gateway.create_channel()
     replacement = FakeWebSocket()
 
-    class ReplacingWebSocket(FakeBrowserWebSocket):
+    class ReplacingWebSocket(FakeProviderWebSocket):
         async def receive(self) -> dict[str, Any]:
             # a new provider takes over the channel before this one is cleaned up
             await channel.attach(replacement, provider_id="p2", provider_name=None)
