@@ -179,11 +179,14 @@ class ChannelRegistry:
 
         return removed
 
-    async def provider_connected(self, channel: Channel) -> None:
-        if channel.channel_id in self._channels:
+    async def provider_connected(self, channel: Channel) -> bool:
+        registered = channel.channel_id in self._channels
+
+        if registered:
             self._expiry[channel.channel_id] = self._expiry_policy.connected_deadline()
 
         await self._dispatch("on_provider_connected", channel)
+        return registered
 
     async def provider_disconnected(self, channel: Channel) -> None:
         if channel.channel_id in self._channels and not channel.provider_connected:

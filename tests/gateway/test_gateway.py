@@ -65,6 +65,15 @@ def test_version_is_exposed_when_enabled(settings: GatewaySettings) -> None:
     assert gateway.admin_stats()["app"]["version"] == gateway.settings.app_version
 
 
+def test_stateless_mode_builds_without_a_session_idle_timeout(settings: GatewaySettings) -> None:
+    stateful = Gateway(settings)
+    assert stateful.manager.session_idle_timeout == settings.mcp_session_idle_timeout_seconds
+
+    stateless = Gateway(settings.model_copy(update={"mcp_stateless": True}))
+    assert stateless.manager.stateless is True
+    assert stateless.manager.session_idle_timeout is None
+
+
 def test_channel_for_scope(settings: GatewaySettings) -> None:
     gateway = Gateway(settings)
 
@@ -298,6 +307,50 @@ async def test_full_tool_round_trip(settings: GatewaySettings, move_tool: dict) 
         assert result.structuredContent == {"ok": True}
 
 
+@pytest.mark.parametrize("mode", [{"mcp_stateless": True}, {"mcp_json_response": True}])
+async def test_tool_round_trip_across_transport_modes(
+    settings: GatewaySettings, move_tool: dict, mode: dict
+) -> None:
+    gateway = Gateway(settings.model_copy(update={"tool_call_timeout_seconds": 2, **mode}))
+    app = gateway.create_app()
+
+    async with app.router.lifespan_context(app):
+        channel = await gateway.create_channel()
+        provider = SignallingWebSocket()
+        await channel.attach(provider, provider_id="p", provider_name="demo")
+        await channel.register("tools", [move_tool])
+
+        async def respond() -> None:
+            await provider.tool_called.wait()
+            call = provider.last("request")
+            channel.handle_result(
+                {"type": "result", "requestId": call["requestId"], "result": {"ok": True}}
+            )
+
+        http_client = httpx.AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+            headers={"Authorization": f"Bearer {channel.mcp_token}"},
+            follow_redirects=True,
+        )
+        service_url = f"http://testserver/mcp/{channel.channel_id}"
+
+        async with (
+            streamable_http_client(service_url, http_client=http_client) as (r, w, _),
+            ClientSession(r, w) as session,
+        ):
+            await session.initialize()
+            tools = await session.list_tools()
+            assert [tool.name for tool in tools.tools] == ["move"]
+
+            responder = asyncio.create_task(respond())
+            result = await session.call_tool("move", {"direction": "right"})
+            await responder
+
+        assert result.isError is False
+        assert result.structuredContent == {"ok": True}
+
+
 async def _auto_respond(channel, provider, replies: dict[str, Any]) -> None:
     seen: set[str] = set()
 
@@ -459,6 +512,30 @@ async def test_provider_endpoint_stops_when_channel_goes_offline(settings: Gatew
 
     await gateway.provider_endpoint(websocket)
     assert channel.provider_connected is False
+
+
+async def test_provider_endpoint_aborts_when_channel_reaped_during_connect(
+    settings: GatewaySettings,
+) -> None:
+    gateway = Gateway(settings)
+    channel = await gateway.create_channel()
+
+    class ReapOnAccept(FakeProviderWebSocket):
+        async def accept(self) -> None:
+            await super().accept()
+            await gateway.registry.remove_channel(channel.channel_id, require_offline=True)
+
+    websocket = ReapOnAccept(
+        query_params={"token": channel.provider_token},
+        headers={"origin": "http://testserver"},
+    )
+
+    await gateway.provider_endpoint(websocket)
+
+    assert websocket.accepted is True
+    assert websocket.close_code == 1008
+    assert gateway.registry.channel_count == 0
+    assert not any(message["type"] == "hello.ack" for message in websocket.messages)
 
 
 async def test_provider_endpoint_survives_channel_error_before_pump(

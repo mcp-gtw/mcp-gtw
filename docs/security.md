@@ -138,7 +138,10 @@ session-remembering cap is invisible (by design, it never affects a live call).
 A channel holds at most one live provider socket: a new connection atomically replaces the previous
 one, so a valid token cannot accumulate sockets. The number of channels is capped by
 `GATEWAY_MAXIMUM_CHANNELS`, enforced before allocation. An invalid token or disallowed origin is
-refused during the WebSocket handshake, before `accept`. The gateway does not otherwise cap the number
+refused during the WebSocket handshake, before `accept`. If the reaper reclaims a channel in the
+instant its provider is reconnecting, the connection is refused with `1008` rather than left serving
+an orphaned channel, so a reconnect racing reclamation can never produce a provider invisible to its
+client. The gateway does not otherwise cap the number
 of simultaneous connections itself — set `GATEWAY_MAXIMUM_CONCURRENT_CONNECTIONS` (applied as the
 server's `limit_concurrency`) and rate-limit at the reverse proxy to bound connection floods.
 

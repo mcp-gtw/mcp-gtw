@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mcp-gtw"
-version = "0.0.3"
+version = "0.0.4"
 description = "A generic MCP gateway whose tools are registered and executed asynchronously by browser applications over WebSocket."
 readme = "README.md"
 requires-python = ">=3.12"

@@ -31,8 +31,8 @@ Prefix: `GATEWAY_`. Defined in [`config.py`](../src/mcp_gtw/config.py).
 | `GATEWAY_OFFLINE_TTL_SECONDS` | `300` | Grace period before a channel with no connected provider is reclaimed. |
 | `GATEWAY_REAPER_INTERVAL_SECONDS` | `30` | How often the background reaper checks for channels to reclaim. |
 | `GATEWAY_MCP_JSON_RESPONSE` | `false` | Return plain JSON instead of SSE on `/mcp`. |
-| `GATEWAY_MCP_STATELESS` | `false` | Run the MCP transport in stateless mode. |
-| `GATEWAY_MCP_SESSION_IDLE_TIMEOUT_SECONDS` | `900` | Idle timeout for an MCP session. |
+| `GATEWAY_MCP_STATELESS` | `false` | Run the MCP transport in stateless mode: no `Mcp-Session-Id`, so a server restart never invalidates a client's transport (the token still resolves the channel). The trade-off is no out-of-band server push — `tools/list_changed`, resource-updated notifications, and reverse calls (`sampling`/`elicitation`) need a stateful session. Use it when the client only calls tools and re-lists on demand. |
+| `GATEWAY_MCP_SESSION_IDLE_TIMEOUT_SECONDS` | `900` | Idle timeout for an MCP session. Applies to stateful mode only; it is ignored when `GATEWAY_MCP_STATELESS` is true (there is no session to expire). |
 | `GATEWAY_ADMIN_ENABLED` | `false` | Enable the admin dashboard (`/admin`) and its stats API. Requires `GATEWAY_ADMIN_KEY`. |
 | `GATEWAY_ADMIN_KEY` | empty | Required when admin is enabled; the dashboard requires `?key=<value>`. Enabling admin with an empty or unset key raises `GatewayConfigurationError` at startup. |
 | `GATEWAY_ADMIN_PATH` | `/admin` | Path the admin dashboard (and its `<path>/stats` API) is served at. Change it to an obscure value so the admin surface is harder to find. Must start with `/`, not be `/`, and not end with `/`; a value that collides with a built-in route raises `GatewayConfigurationError` at startup. |

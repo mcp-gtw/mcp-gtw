@@ -327,12 +327,16 @@ class Gateway(GatewayListener):
         return server
 
     def _build_manager(self) -> StreamableHTTPSessionManager:
+        idle_timeout = (
+            None if self.settings.mcp_stateless else self.settings.mcp_session_idle_timeout_seconds
+        )
+
         return StreamableHTTPSessionManager(
             app=self.server,
             event_store=None,
             json_response=self.settings.mcp_json_response,
             stateless=self.settings.mcp_stateless,
-            session_idle_timeout=self.settings.mcp_session_idle_timeout_seconds,
+            session_idle_timeout=idle_timeout,
             security_settings=TransportSecuritySettings(enable_dns_rebinding_protection=False),
         )
 
@@ -391,7 +395,11 @@ class Gateway(GatewayListener):
 
         await websocket.accept()
         await channel.attach(websocket, provider_id=provider_id, provider_name=provider_name)
-        await self.registry.provider_connected(channel)
+
+        if not await self.registry.provider_connected(channel):
+            await channel.detach(websocket)
+            await websocket.close(code=1008, reason="Channel is no longer available")
+            return
 
         try:
             await channel.send_to_provider(protocol.hello_ack(PROTOCOL_VERSION, channel.channel_id))
