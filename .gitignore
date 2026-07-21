@@ -6,6 +6,8 @@ Thumbs.db
 .idea
 .vscode
 .iml
+.codex
+.claude
 
 # auto generated
 **/*.pyc
