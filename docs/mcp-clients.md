@@ -121,7 +121,37 @@ with `annotations.readOnlyHint` when you register them also lets some hosts run 
 }
 ```
 
-**Claude Desktop** — add a custom connector with the URL and token, or use the generic JSON above.
+**Claude Desktop** — its config file runs stdio servers, so a remote Streamable HTTP endpoint needs
+the [`mcp-remote`](https://www.npmjs.com/package/mcp-remote) bridge. Open Settings → Developer → Edit
+Config (or edit `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS,
+`%APPDATA%\Claude\claude_desktop_config.json` on Windows) and add:
+
+```json
+{
+  "mcpServers": {
+    "my-gateway": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "http://127.0.0.1:8000/mcp",
+        "--header",
+        "Authorization: Bearer <MCP_TOKEN>"
+      ]
+    }
+  }
+}
+```
+
+Fully quit and reopen Claude Desktop (closing the window is not enough) and the server appears in its
+tools. Newer builds can instead add the endpoint as a **custom connector** under Settings →
+Connectors, which skips the bridge. Three things commonly trip people up:
+
+- `npx` needs Node.js on the machine (`node -v`); without it the bridge never starts.
+- `127.0.0.1` only works when the gateway runs on that same machine. For a remote user, publish the
+  gateway on a reachable host — a LAN IP, a tunnel such as ngrok or cloudflared, or a real deploy — a
+  `localhost` URL never connects from another machine.
+- Prefer real HTTPS. `mcp-remote` can reject a self-signed or plain-HTTP endpoint.
 
 Because the gateway is a normal MCP server, any tool that drives a local model through MCP (LM
 Studio, or an Ollama model wired into Cursor, Cline or Continue) reaches the provider-registered tools
