@@ -94,8 +94,8 @@ This repo is published to PyPI as `mcp-gtw` (the import package stays `mcp_gtw`)
 ## Key modules (`src/mcp_gtw/`)
 
 - `gateway.py` — the `Gateway` class, the composition root: it wires the strategies below, is the
-  FastAPI app factory, CORS, routes (`/mcp`, `/provider`, `/health`, `/`, `/logo.svg`, optional
-  admin at `GATEWAY_ADMIN_PATH`), the `/mcp` ASGI wrapper, the `/provider` websocket pump, the admin dashboard, and the
+  FastAPI app factory, CORS, routes (`/mcp`, `/provider`, `/health`, `/`, `/logo.svg`, favicons,
+  optional admin at `GATEWAY_ADMIN_PATH`), the `/mcp` ASGI wrapper, the `/provider` websocket pump, the admin dashboard, and the
   lifespan (session manager + reaper + `serve`). Endpoints delegate every decision to a strategy.
 - `channel.py` — `Channel`: attach/detach a provider, compile/replace the registries (tools,
   resources, resource templates, prompts), relay a request to the provider (correlate a `Future` over
@@ -185,7 +185,7 @@ change. Treat a doc that describes something the code no longer does as a bug.
 - `.env.example` lists every `GATEWAY_*` setting (commented, with defaults). When you add or change a
   setting in `config.py`, update `.env.example` and `docs/configuration.md` in the same change so the
   three never drift.
-- The home page reads `web/index.html` at import and `str.format`s `{name}`/`{initial}` — keep that
+- The home page reads `web/index.html` at import and `str.format`s `{name}` — keep that
   file free of other `{`/`}`. `web/admin.html` is served raw (its JS braces are fine).
-- Package data (`web/*.html`, `web/logo.svg`, `py.typed`) must ship in the wheel — hatchling includes
+- Package data (`web/*`, `py.typed`) must ship in the wheel — hatchling includes
   everything under the package.

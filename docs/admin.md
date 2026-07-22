@@ -29,8 +29,9 @@ GATEWAY_ADMIN_PATH=/ops/9f3c2b
 ```
 
 The path must start with `/`, must not be `/`, and must not end with `/`. A value that collides with
-a built-in route (`/`, `/health`, `/provider`, `/logo.svg`, or anything under the `/mcp` mount) raises
-`GatewayConfigurationError` at startup rather than shadowing the gateway silently.
+a built-in route (`/`, `/health`, `/provider`, `/logo.svg`, the favicon assets, or anything under
+the `/mcp` mount) raises `GatewayConfigurationError` at startup rather than shadowing the gateway
+silently.
 
 ## Pages
 

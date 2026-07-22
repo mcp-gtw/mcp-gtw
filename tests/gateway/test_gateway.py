@@ -92,12 +92,24 @@ async def test_home_health_logo_and_cors() -> None:
         home = await client.get("/")
         assert home.status_code == 200
         assert "Test Gateway" in home.text
-        assert ">T<" in home.text  # favicon initial letter
+        assert 'href="/favicon-32x32.png"' in home.text
+        assert 'href="/apple-touch-icon.png"' in home.text
+        assert 'href="/site.webmanifest"' in home.text
         assert "text/html" in home.headers["content-type"]
 
-        logo = await client.get("/logo.svg")
-        assert logo.status_code == 200
-        assert logo.headers["content-type"] == "image/svg+xml"
+        for path, _filename, media_type in (
+            ("/logo.svg", "logo.svg", "image/svg+xml"),
+            ("/favicon.ico", "favicon.ico", "image/x-icon"),
+            ("/favicon-16x16.png", "favicon-16x16.png", "image/png"),
+            ("/favicon-32x32.png", "favicon-32x32.png", "image/png"),
+            ("/apple-touch-icon.png", "apple-touch-icon.png", "image/png"),
+            ("/android-chrome-192x192.png", "android-chrome-192x192.png", "image/png"),
+            ("/android-chrome-512x512.png", "android-chrome-512x512.png", "image/png"),
+            ("/site.webmanifest", "site.webmanifest", "application/manifest+json"),
+        ):
+            response = await client.get(path)
+            assert response.status_code == 200
+            assert response.headers["content-type"].startswith(media_type.split(";")[0])
 
         health = await client.get("/health", headers={"Origin": "http://example.com"})
         assert health.json()["status"] == "ok"

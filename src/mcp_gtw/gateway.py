@@ -4,7 +4,7 @@ import asyncio
 import contextlib
 import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any
 
@@ -42,7 +42,19 @@ logger = logging.getLogger(__name__)
 
 SCOPE_CHANNEL_KEY = "gateway_channel_id"
 
-_RESERVED_ROUTE_PATHS = frozenset({"/", "/health", "/provider", "/logo.svg"})
+_WEB_FILES: tuple[tuple[str, str, str], ...] = (
+    ("/logo.svg", "logo.svg", "image/svg+xml"),
+    ("/favicon.ico", "favicon.ico", "image/x-icon"),
+    ("/favicon-16x16.png", "favicon-16x16.png", "image/png"),
+    ("/favicon-32x32.png", "favicon-32x32.png", "image/png"),
+    ("/apple-touch-icon.png", "apple-touch-icon.png", "image/png"),
+    ("/android-chrome-192x192.png", "android-chrome-192x192.png", "image/png"),
+    ("/android-chrome-512x512.png", "android-chrome-512x512.png", "image/png"),
+    ("/site.webmanifest", "site.webmanifest", "application/manifest+json"),
+)
+_RESERVED_ROUTE_PATHS = frozenset(
+    {"/", "/health", "/provider", *(path for path, _, _ in _WEB_FILES)}
+)
 _MCP_MOUNT_PATH = "/mcp"
 
 _WEB_DIR = Path(__file__).parent / "web"
@@ -112,10 +124,7 @@ class Gateway(GatewayListener):
         self.authenticator = authenticator or self.authenticator_class(self.registry)
         self.server = self._build_server()
         self.manager = self._build_manager()
-        self._home_html = _HOME_TEMPLATE.format(
-            name=self.settings.app_name,
-            initial=self.settings.app_name[:1].upper(),
-        )
+        self._home_html = _HOME_TEMPLATE.format(name=self.settings.app_name)
 
     async def create_channel(self, **kwargs: Any) -> Channel:
         return await self.registry.create_channel(**kwargs)
@@ -143,7 +152,15 @@ class Gateway(GatewayListener):
         app.add_api_websocket_route("/provider", self.provider_endpoint)
         app.add_api_route("/health", self.health, methods=["GET"])
         app.add_api_route("/", self.home, methods=["GET"], include_in_schema=False)
-        app.add_api_route("/logo.svg", self.logo, methods=["GET"], include_in_schema=False)
+
+        for path, filename, media_type in _WEB_FILES:
+            app.add_api_route(
+                path,
+                self._web_file(filename, media_type),
+                methods=["GET"],
+                include_in_schema=False,
+            )
+
         app.mount("/mcp", self.mcp_asgi)
 
         if self.settings.admin_enabled:
@@ -162,8 +179,12 @@ class Gateway(GatewayListener):
     async def home(self) -> Response:
         return HTMLResponse(self._home_html)
 
-    async def logo(self) -> FileResponse:
-        return FileResponse(_WEB_DIR / "logo.svg", media_type="image/svg+xml")
+    @staticmethod
+    def _web_file(filename: str, media_type: str) -> Callable[[], Any]:
+        async def serve() -> FileResponse:
+            return FileResponse(_WEB_DIR / filename, media_type=media_type)
+
+        return serve
 
     async def health(self) -> dict[str, Any]:
         return {"status": "ok", "channels": self.registry.channel_count}
