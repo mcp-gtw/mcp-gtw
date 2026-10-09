@@ -4,9 +4,9 @@ import asyncio
 
 from support import FakeWebSocket
 
-from mcp_gtw.config import GatewaySettings
-from mcp_gtw.gateway import Gateway
-from mcp_gtw.registry import ChannelRegistry
+from mcpgtw.config import GatewaySettings
+from mcpgtw.gateway import Gateway
+from mcpgtw.registry import ChannelRegistry
 
 
 async def test_thousands_of_channels_stay_unique_and_resolvable(settings: GatewaySettings) -> None:

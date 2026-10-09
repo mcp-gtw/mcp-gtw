@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from mcp_gtw.authenticator import Authenticator, TokenAuthenticator, extract_bearer_token
-from mcp_gtw.config import GatewaySettings
-from mcp_gtw.registry import ChannelRegistry
-from mcp_gtw.tokens import SecretsTokenProvider
+from mcpgtw.authenticator import Authenticator, TokenAuthenticator, extract_bearer_token
+from mcpgtw.config import GatewaySettings
+from mcpgtw.registry import ChannelRegistry
+from mcpgtw.tokens import SecretsTokenProvider
 
 
 class FakeConnection:

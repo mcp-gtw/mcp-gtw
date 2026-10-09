@@ -5,11 +5,11 @@ import time
 import pytest
 from support import FakeWebSocket
 
-from mcp_gtw.config import GatewaySettings
-from mcp_gtw.errors import ChannelCapacityError
-from mcp_gtw.listeners import GatewayListener
-from mcp_gtw.registry import ChannelRegistry
-from mcp_gtw.tokens import SecretsTokenProvider
+from mcpgtw.config import GatewaySettings
+from mcpgtw.errors import ChannelCapacityError
+from mcpgtw.listeners import GatewayListener
+from mcpgtw.registry import ChannelRegistry
+from mcpgtw.tokens import SecretsTokenProvider
 
 
 class RecordingListener(GatewayListener):

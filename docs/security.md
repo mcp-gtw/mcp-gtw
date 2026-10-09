@@ -195,3 +195,7 @@ These are inherent to the design. Plan for them when the provider is not fully t
   take minutes. The wait blocks only that provider's own message pump on its own channel — it holds
   no lock and never affects other channels or the loop — but a provider should not expect to service
   other frames while its reverse call is outstanding.
+
+## OAuth client authorization
+
+Public MCP OAuth is opt-in and requires explicit channel grants. Provider WebSocket credentials remain separate. See [OAuth configuration, extension contracts, transport gates and deployment limits](oauth.md). The embedded authorization server is blocked at startup and remains unimplemented.

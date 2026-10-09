@@ -6,14 +6,14 @@ Settings are read from environment variables (optionally from a `.env` file) thr
 
 ## Gateway settings
 
-Prefix: `GATEWAY_`. Defined in [`config.py`](../src/mcp_gtw/config.py).
+Prefix: `GATEWAY_`. Defined in [`config.py`](../src/mcpgtw/config.py).
 
 | Variable | Default | Description |
 | --- | --- | --- |
 | `GATEWAY_APP_NAME` | `MCP Gateway` | Display name, also shown on the home page. |
 | `GATEWAY_APP_VERSION` | installed package version | Version reported to MCP clients. Defaults to the `mcp-gtw` version from package metadata. |
 | `GATEWAY_EXPOSE_VERSION` | `false` | Show the version on the HTTP surface (the `/admin` stats and `/openapi.json`). Off by default so the version cannot be fingerprinted anonymously. The authenticated MCP `serverInfo` reports it regardless (protocol requirement). |
-| `GATEWAY_HOST` | `127.0.0.1` | Interface the bundled runner (`python -m mcp_gtw.main`) binds to. |
+| `GATEWAY_HOST` | `127.0.0.1` | Interface the bundled runner (`python -m mcpgtw.main`) binds to. |
 | `GATEWAY_PORT` | `8000` | Port the bundled runner binds to. Also reads the platform-standard `PORT` (with `GATEWAY_PORT` taking precedence) so PaaS one-click deploys work unchanged. |
 | `GATEWAY_MAXIMUM_CONCURRENT_CONNECTIONS` | empty (unlimited) | Caps simultaneous connections at the server (uvicorn `limit_concurrency`). Empty delegates to the server default. |
 | `GATEWAY_ALLOWED_PROVIDER_ORIGINS` | `localhost`/`127.0.0.1` on `8000` | Origins allowed to open the private provider WebSocket. `*` allows any origin. |
@@ -58,9 +58,9 @@ never be able to exhaust the gateway's memory or stack.
 ## Loading in code
 
 ```python
-from mcp_gtw.config import GatewaySettings
+from mcpgtw.config import GatewaySettings
 
-settings = GatewaySettings()                       # reads GATEWAY_* and .env
+settings = GatewaySettings()  # reads GATEWAY_* and .env
 settings = GatewaySettings(maximum_channels=1000)  # explicit overrides win
 ```
 
@@ -69,12 +69,42 @@ settings = GatewaySettings(maximum_channels=1000)  # explicit overrides win
 Add your own fields by subclassing and pointing the gateway at your class:
 
 ```python
-from mcp_gtw.config import GatewaySettings
-from mcp_gtw.gateway import Gateway
+from mcpgtw.config import GatewaySettings
+from mcpgtw.gateway import Gateway
+
 
 class MySettings(GatewaySettings):
     welcome_message: str = "hello"
 
+
 class MyGateway(Gateway):
     settings_class = MySettings
 ```
+
+## OAuth settings
+
+Lists are comma separated. OAuth requires an application-provided channel access policy; enabling it on the bare runner fails closed. See [OAuth](oauth.md).
+
+| Variable | Default |
+| --- | --- |
+| `GATEWAY_OAUTH_MODE` | `off` |
+| `GATEWAY_OAUTH_RESOURCE_URL` | `` |
+| `GATEWAY_OAUTH_AUTHORIZATION_SERVERS` | `` |
+| `GATEWAY_OAUTH_REQUIRED_SCOPES` | `mcp:access` |
+| `GATEWAY_OAUTH_ALLOW_STATIC_MCP_TOKENS` | `false` |
+| `GATEWAY_OAUTH_ALLOW_LOCALHOST_HTTP` | `false` |
+| `GATEWAY_OAUTH_TOKEN_VERIFIER` | `jwt` |
+| `GATEWAY_OAUTH_JWKS_URL` | `` |
+| `GATEWAY_OAUTH_JWT_ALLOWED_ALGORITHMS` | `RS256,ES256` |
+| `GATEWAY_OAUTH_INTROSPECTION_URL` | `` |
+| `GATEWAY_OAUTH_INTROSPECTION_CLIENT_ID` | `` |
+| `GATEWAY_OAUTH_INTROSPECTION_CLIENT_SECRET` | `` |
+| `GATEWAY_OAUTH_HTTP_TIMEOUT_SECONDS` | `5.0` |
+| `GATEWAY_OAUTH_MAX_TOKEN_BYTES` | `8192` |
+| `GATEWAY_OAUTH_MAX_METADATA_BYTES` | `65536` |
+| `GATEWAY_OAUTH_JWKS_CACHE_TTL_SECONDS` | `300.0` |
+| `GATEWAY_OAUTH_CLOCK_SKEW_SECONDS` | `30` |
+| `GATEWAY_OAUTH_RATE_LIMIT_REQUESTS` | `120` |
+| `GATEWAY_OAUTH_RATE_LIMIT_WINDOW_SECONDS` | `1.0` |
+| `GATEWAY_OAUTH_RATE_LIMIT_MAXIMUM_KEYS` | `10000` |
+| `GATEWAY_OAUTH_MAXIMUM_SESSIONS` | `10000` |

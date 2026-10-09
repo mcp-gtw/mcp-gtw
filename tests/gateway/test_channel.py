@@ -8,9 +8,9 @@ import mcp.types as types
 import pytest
 from support import FakeWebSocket
 
-from mcp_gtw.channel import Channel, PendingRequest
-from mcp_gtw.config import GatewaySettings
-from mcp_gtw.errors import (
+from mcpgtw.channel import Channel, PendingRequest
+from mcpgtw.config import GatewaySettings
+from mcpgtw.errors import (
     ChannelOfflineError,
     ProviderMessageError,
     ProviderRequestError,
@@ -51,21 +51,21 @@ async def test_registers_and_executes_tool(settings: GatewaySettings, move_tool:
         {"type": "result", "requestId": call["requestId"], "result": {"ok": True}}
     )
     result = await task
-    assert result.isError is False
-    assert result.structuredContent == {"ok": True}
+    assert result.is_error is False
+    assert result.structured_content == {"ok": True}
 
 
 async def test_unknown_tool(settings: GatewaySettings) -> None:
     channel = make_channel(settings)
     result = await channel.execute_tool(name="missing", arguments={})
-    assert result.isError is True
+    assert result.is_error is True
     assert "Unknown tool" in result.content[0].text
 
 
 async def test_input_validation_error(settings: GatewaySettings, move_tool: dict) -> None:
     channel, _ = await register_and_attach(settings, move_tool)
     result = await channel.execute_tool(name="move", arguments={})
-    assert result.isError is True
+    assert result.is_error is True
     assert "Input validation error" in result.content[0].text
 
 
@@ -73,7 +73,7 @@ async def test_execute_without_provider(settings: GatewaySettings, move_tool: di
     channel = make_channel(settings)
     await channel.register("tools", [move_tool])
     result = await channel.execute_tool(name="move", arguments={"direction": "left"})
-    assert result.isError is True
+    assert result.is_error is True
     assert "offline" in result.content[0].text
 
 
@@ -86,11 +86,11 @@ async def test_pending_call_limit(settings: GatewaySettings, move_tool: dict) ->
     await asyncio.sleep(0)
 
     overflow = await channel.execute_tool(name="move", arguments={"direction": "left"})
-    assert overflow.isError is True
+    assert overflow.is_error is True
     assert "Too many pending calls" in overflow.content[0].text
 
     for task in tasks:
-        assert (await task).isError is True
+        assert (await task).is_error is True
 
 
 async def test_subscription_limit_rejects_a_new_uri(settings: GatewaySettings) -> None:
@@ -265,7 +265,7 @@ async def test_stale_provider_frame_cannot_clobber_the_channel(
 async def test_timeout_sends_cancel(settings: GatewaySettings, move_tool: dict) -> None:
     channel, websocket = await register_and_attach(settings, move_tool)
     result = await channel.execute_tool(name="move", arguments={"direction": "right"})
-    assert result.isError is True
+    assert result.is_error is True
     assert "timed out" in result.content[0].text
     assert websocket.last("cancel")["reason"] == "timeout"
 
@@ -290,7 +290,7 @@ async def test_call_timeout_can_be_overridden_per_tool(
     await channel.register("tools", [move_tool])
 
     result = await channel.execute_tool(name="move", arguments={"direction": "left"})
-    assert result.isError is True
+    assert result.is_error is True
     assert "timed out after 0.01 seconds" in result.content[0].text
 
 
@@ -320,7 +320,7 @@ async def test_call_timeout_none_disables_the_timeout(
         {"type": "result", "requestId": call["requestId"], "result": {"ok": True}}
     )
     result = await task
-    assert result.isError is False
+    assert result.is_error is False
 
 
 async def test_detach_fails_pending_call(settings: GatewaySettings, move_tool: dict) -> None:
@@ -330,7 +330,7 @@ async def test_detach_fails_pending_call(settings: GatewaySettings, move_tool: d
     assert await channel.detach(websocket) is True
 
     result = await task
-    assert result.isError is True
+    assert result.is_error is True
     assert "disconnected" in result.content[0].text
 
 
@@ -352,7 +352,7 @@ async def test_reattach_replaces_previous(settings: GatewaySettings, move_tool: 
     assert first.closed is True
     assert channel.tool_count == 0
     result = await task
-    assert result.isError is True
+    assert result.is_error is True
     assert "replaced" in result.content[0].text
 
 
@@ -534,7 +534,7 @@ async def test_handle_result_error_payload(settings: GatewaySettings, move_tool:
     call = websocket.last("request")
     channel.handle_result({"type": "result", "requestId": call["requestId"], "error": "too far"})
     result = await task
-    assert result.isError is True
+    assert result.is_error is True
     assert result.content[0].text == "too far"
 
 
@@ -547,7 +547,7 @@ async def test_handle_result_invalid_payload(settings: GatewaySettings, move_too
         {"type": "result", "requestId": call["requestId"], "result": {"content": "bad"}}
     )
     result = await task
-    assert result.isError is True
+    assert result.is_error is True
     assert "Invalid provider result" in result.content[0].text
 
 
@@ -569,8 +569,8 @@ async def test_handle_result_ignores_done_future(
 
 def test_normalize_result_shapes() -> None:
     assert Channel.normalize_result("hello").content[0].text == "hello"
-    assert Channel.normalize_result({"a": 1}).structuredContent == {"a": 1}
-    assert Channel.normalize_result([1, 2]).structuredContent is None
+    assert Channel.normalize_result({"a": 1}).structured_content == {"a": 1}
+    assert Channel.normalize_result([1, 2]).structured_content is None
     wrapped = Channel.normalize_result(
         {"content": [{"type": "text", "text": "x"}], "isError": False}
     )
@@ -583,7 +583,7 @@ async def test_validate_output_paths(settings: GatewaySettings, move_tool: dict)
     tool = channel._tools["move"]
     error = Channel.error_result("boom")
     assert channel.validate_output(tool, error) is error
-    assert channel.validate_output(tool, Channel.normalize_result("x")).isError is False
+    assert channel.validate_output(tool, Channel.normalize_result("x")).is_error is False
 
 
 async def test_validate_output_with_schema(settings: GatewaySettings) -> None:
@@ -611,7 +611,7 @@ async def test_validate_output_with_schema(settings: GatewaySettings) -> None:
     assert "Output validation error" in invalid.content[0].text
 
     ok = channel.validate_output(tool, Channel.normalize_result({"score": 3}))
-    assert ok.isError is False
+    assert ok.is_error is False
 
 
 async def test_snapshot_reflects_provider_and_tools(
@@ -687,7 +687,7 @@ async def test_execute_tool_survives_a_transport_send_failure(
 
     result = await channel.execute_tool(name="move", arguments={"direction": "right"})
 
-    assert result.isError
+    assert result.is_error
     assert result.content[0].text == "Failed to send to the channel provider"
     assert channel._pending == {}
 
@@ -814,7 +814,7 @@ async def test_register_and_list_resources(settings: GatewaySettings) -> None:
     await channel.register("resources", [RESOURCE])
     assert [str(r.uri) for r in channel.list_resources()] == ["mem://a"]
     await channel.register("resourceTemplates", [{"uriTemplate": "mem://{id}", "name": "t"}])
-    assert [t.uriTemplate for t in channel.list_resource_templates()] == ["mem://{id}"]
+    assert [t.uri_template for t in channel.list_resource_templates()] == ["mem://{id}"]
 
 
 async def test_register_duplicate_resource(settings: GatewaySettings) -> None:
@@ -1252,8 +1252,8 @@ class ClientCallSession(RecordingSession):
             role="assistant", content=types.TextContent(type="text", text="hi"), model="m"
         )
 
-    async def elicit(self, message, requestedSchema) -> types.ElicitResult:
-        self.elicit_args = (message, requestedSchema)
+    async def elicit_form(self, message, requested_schema) -> types.ElicitResult:
+        self.elicit_args = (message, requested_schema)
         return types.ElicitResult(action="accept", content={"ok": True})
 
 

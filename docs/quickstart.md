@@ -36,11 +36,11 @@ real application, subclass `Gateway` — see the [Gateway library](gateway-libra
 Sessions are created by your application, not by the bare library. A minimal helper:
 
 ```python
-from mcp_gtw.gateway import Gateway
+from mcpgtw.gateway import Gateway
 
 gateway = Gateway()
 channel = await gateway.create_channel(metadata={"name": "Neo"})
-print(channel.mcp_token)      # give this to the MCP client
+print(channel.mcp_token)  # give this to the MCP client
 print(channel.provider_token)  # give this to the provider
 ```
 

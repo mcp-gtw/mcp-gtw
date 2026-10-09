@@ -20,7 +20,7 @@ endpoint that mints a channel and returns the URLs:
 ```python
 from fastapi import FastAPI, Request
 
-from mcp_gtw.gateway import Gateway
+from mcpgtw.gateway import Gateway
 
 
 class ConsoleGateway(Gateway):

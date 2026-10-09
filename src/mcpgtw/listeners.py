@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from mcp_gtw.channel import Channel
+from mcpgtw.channel import Channel
 
 
 class GatewayListener:

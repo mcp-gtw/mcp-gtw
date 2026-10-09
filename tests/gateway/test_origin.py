@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from mcp_gtw.origin import ListOriginPolicy, OriginPolicy
+from mcpgtw.origin import ListOriginPolicy, OriginPolicy
 
 
 def test_missing_origin_is_always_allowed() -> None:

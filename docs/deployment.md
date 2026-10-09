@@ -2,7 +2,7 @@
 
 ## Publishing to PyPI
 
-The package is published to PyPI as `mcp-gtw` (the import package stays `mcp_gtw`). Pushing a
+The package is published to PyPI as `mcp-gtw` (the import package stays `mcpgtw`). Pushing a
 version tag runs [`release.yml`](../.github/workflows/release.yml): it checks the tag matches the
 `pyproject.toml` version, runs lint and the coverage gate, builds, and publishes with
 `uv publish --trusted-publishing always`.
@@ -22,7 +22,7 @@ release (pypi.org → Account → Publishing → Add a pending publisher): PyPI 
 ## Docker
 
 The [`Dockerfile`](../Dockerfile) builds an image that serves the bare gateway through the bundled
-runner (`python -m mcp_gtw.main`), which reads `GatewaySettings` and applies the transport frame
+runner (`python -m mcpgtw.main`), which reads `GatewaySettings` and applies the transport frame
 limit (`ws_max_size` = `GATEWAY_MAXIMUM_WEBSOCKET_MESSAGE_BYTES`) and `GATEWAY_MAXIMUM_CONCURRENT_CONNECTIONS`.
 Prefer this entrypoint over launching bare `uvicorn`, which would not apply those limits. The image
 runs production-ready out of the box: it binds `0.0.0.0` (`GATEWAY_HOST`), runs as a non-root user,
@@ -138,3 +138,7 @@ without one of these — a provider on worker A and a client on worker B would n
 - Front the service with TLS and keep `/mcp` and the WebSocket paths uncached.
 
 See [security](security.md) for the full hardening checklist.
+
+## OAuth client authorization
+
+Public MCP OAuth is opt-in and requires explicit channel grants. Provider WebSocket credentials remain separate. See [OAuth configuration, extension contracts, transport gates and deployment limits](oauth.md). The embedded authorization server is blocked at startup and remains unimplemented.

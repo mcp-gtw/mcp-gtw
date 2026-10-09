@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from mcp_gtw.tokens import SecretsTokenProvider, TokenProvider
+from mcpgtw.tokens import SecretsTokenProvider, TokenProvider
 
 
 def test_generate_is_unique_and_urlsafe() -> None:

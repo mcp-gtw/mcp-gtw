@@ -15,7 +15,7 @@ The gate is configured in [`pyproject.toml`](../pyproject.toml):
 ```toml
 [tool.coverage.run]
 branch = true
-source = ["mcp_gtw"]
+source = ["mcpgtw"]
 
 [tool.coverage.report]
 fail_under = 100
@@ -65,3 +65,9 @@ tests/
 make lint          # ruff check + ruff format --check
 make format        # apply formatting and safe fixes
 ```
+
+## OAuth client authorization
+
+Public MCP OAuth is opt-in and requires explicit channel grants. Provider WebSocket credentials remain separate. See [OAuth configuration, extension contracts, transport gates and deployment limits](oauth.md). The embedded authorization server is blocked at startup and remains unimplemented.
+
+`make sdk-smoke` runs real JavaScript providers against OAuth and static MCP clients on loopback. Requirements and test-only boundaries: [tests/e2e/README.md](../tests/e2e/README.md).

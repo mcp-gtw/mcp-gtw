@@ -6,20 +6,20 @@ import json
 import re
 from typing import Any
 
-import httpx
+import httpx2 as httpx
 import mcp.types as mcp_types
 import pytest
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
-from httpx import ASGITransport
+from httpx2 import ASGITransport
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 from starlette.requests import Request
 from support import FakeProviderWebSocket, FakeWebSocket
 
-from mcp_gtw.config import GatewaySettings
-from mcp_gtw.errors import GatewayConfigurationError, GatewayError
-from mcp_gtw.gateway import SCOPE_CHANNEL_KEY, Gateway
+from mcpgtw.config import GatewaySettings
+from mcpgtw.errors import GatewayConfigurationError, GatewayError
+from mcpgtw.gateway import SCOPE_CHANNEL_KEY, Gateway
 
 
 class SignallingWebSocket(FakeWebSocket):
@@ -304,7 +304,7 @@ async def test_full_tool_round_trip(settings: GatewaySettings, move_tool: dict) 
         service_url = f"http://testserver/mcp/{channel.channel_id}"
 
         async with (
-            streamable_http_client(service_url, http_client=http_client) as (r, w, _),
+            streamable_http_client(service_url, http_client=http_client) as (r, w),
             ClientSession(r, w) as session,
         ):
             await session.initialize()
@@ -315,8 +315,8 @@ async def test_full_tool_round_trip(settings: GatewaySettings, move_tool: dict) 
             result = await session.call_tool("move", {"direction": "right"})
             await responder
 
-        assert result.isError is False
-        assert result.structuredContent == {"ok": True}
+        assert result.is_error is False
+        assert result.structured_content == {"ok": True}
 
 
 @pytest.mark.parametrize("mode", [{"mcp_stateless": True}, {"mcp_json_response": True}])
@@ -348,7 +348,7 @@ async def test_tool_round_trip_across_transport_modes(
         service_url = f"http://testserver/mcp/{channel.channel_id}"
 
         async with (
-            streamable_http_client(service_url, http_client=http_client) as (r, w, _),
+            streamable_http_client(service_url, http_client=http_client) as (r, w),
             ClientSession(r, w) as session,
         ):
             await session.initialize()
@@ -359,8 +359,8 @@ async def test_tool_round_trip_across_transport_modes(
             result = await session.call_tool("move", {"direction": "right"})
             await responder
 
-        assert result.isError is False
-        assert result.structuredContent == {"ok": True}
+        assert result.is_error is False
+        assert result.structured_content == {"ok": True}
 
 
 async def _auto_respond(channel, provider, replies: dict[str, Any]) -> None:
@@ -382,7 +382,6 @@ async def _auto_respond(channel, provider, replies: dict[str, Any]) -> None:
 
 
 async def test_full_resource_round_trip(settings: GatewaySettings) -> None:
-    from pydantic import AnyUrl
 
     gateway = Gateway(settings.model_copy(update={"tool_call_timeout_seconds": 2}))
     app = gateway.create_app()
@@ -417,7 +416,7 @@ async def test_full_resource_round_trip(settings: GatewaySettings) -> None:
         service_url = f"http://testserver/mcp/{channel.channel_id}"
 
         async with (
-            streamable_http_client(service_url, http_client=http_client) as (r, w, _),
+            streamable_http_client(service_url, http_client=http_client) as (r, w),
             ClientSession(r, w) as session,
         ):
             await session.initialize()
@@ -425,13 +424,13 @@ async def test_full_resource_round_trip(settings: GatewaySettings) -> None:
             assert [str(res.uri) for res in resources.resources] == ["mem://a"]
 
             templates = await session.list_resource_templates()
-            assert [t.uriTemplate for t in templates.resourceTemplates] == ["mem://{id}"]
+            assert [t.uri_template for t in templates.resource_templates] == ["mem://{id}"]
 
-            read = await session.read_resource(AnyUrl("mem://a"))
+            read = await session.read_resource("mem://a")
             assert read.contents[0].text == "hi"
 
-            await session.subscribe_resource(AnyUrl("mem://a"))
-            await session.unsubscribe_resource(AnyUrl("mem://a"))
+            await session.subscribe_resource("mem://a")
+            await session.unsubscribe_resource("mem://a")
 
             prompts = await session.list_prompts()
             assert [p.name for p in prompts.prompts] == ["greet"]

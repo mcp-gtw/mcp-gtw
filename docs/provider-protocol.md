@@ -3,7 +3,7 @@
 The gateway and the provider speak a small, private, versioned protocol over the WebSocket at
 `/provider`. It is **not** MCP and is never exposed to MCP clients; it is a thin JSON-RPC-shaped
 relay that mirrors the MCP surface. Message builders live in
-[`protocol.py`](../src/mcp_gtw/protocol.py); the protocol version is `mcp-gtw-provider/1`.
+[`protocol.py`](../src/mcpgtw/protocol.py); the protocol version is `mcp-gtw-provider/1`.
 
 Every frame is a JSON object with a `type`. There are three shapes:
 

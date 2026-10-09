@@ -1,6 +1,6 @@
 # Gateway library
 
-`mcp_gtw` is a generic, subclassable core. You build a real application by subclassing `Gateway`
+`mcpgtw` is a generic, subclassable core. You build a real application by subclassing `Gateway`
 and overriding what you need. It knows nothing about any domain.
 
 ## Classes
@@ -22,18 +22,18 @@ Every behaviour above is a swappable strategy — the full contract of each, and
 [extensibility.md](extensibility.md). Because every `__init__.py` is empty, import from the submodule:
 
 ```python
-from mcp_gtw.gateway import Gateway
-from mcp_gtw.channel import Channel
-from mcp_gtw.config import GatewaySettings
+from mcpgtw.gateway import Gateway
+from mcpgtw.channel import Channel
+from mcpgtw.config import GatewaySettings
 ```
 
 ## The `Gateway` class
 
 ```python
-from mcp_gtw.gateway import Gateway
+from mcpgtw.gateway import Gateway
 
-gateway = Gateway()          # uses GatewaySettings() from the environment
-app = gateway.create_app()   # a ready to serve FastAPI application
+gateway = Gateway()  # uses GatewaySettings() from the environment
+app = gateway.create_app()  # a ready to serve FastAPI application
 ```
 
 `create_app` wires CORS, the routes (`/mcp`, `/provider`, `/health`, `/`) and the lifespan (the MCP
@@ -90,6 +90,7 @@ Override `serve` — an async context manager that runs for the lifetime of the 
 ```python
 import asyncio, contextlib
 
+
 class MyGateway(Gateway):
     @contextlib.asynccontextmanager
     async def serve(self):
@@ -108,8 +109,8 @@ Create a session from the gateway. It mints two independent tokens:
 
 ```python
 channel = await gateway.create_channel(metadata={"name": "Neo"})
-channel.mcp_token       # the MCP client authenticates with this
-channel.provider_token   # the provider authenticates with this
+channel.mcp_token  # the MCP client authenticates with this
+channel.provider_token  # the provider authenticates with this
 ```
 
 Never share one token across both sides. The registry resolves them back:
@@ -147,9 +148,10 @@ the call then waits until the provider responds or disconnects:
 class MyChannel(Channel):
     def call_timeout_seconds(self, method, params):
         if method == "tools/call" and params.get("name") == "render_video":
-            return None          # wait as long as it takes
+            return None  # wait as long as it takes
 
         return super().call_timeout_seconds(method, params)
+
 
 class MyGateway(Gateway):
     channel_class = MyChannel
@@ -174,6 +176,7 @@ so the browser connects immediately:
 ```python
 from fastapi.responses import HTMLResponse
 from starlette.requests import Request
+
 
 class MyGateway(Gateway):
     async def home(self, request: Request) -> HTMLResponse:
@@ -200,3 +203,7 @@ await provider.connect();
 That is it — the socket is open and the tools are live before the visitor does anything. Hand the
 matching `mcp_token` (and `/mcp/<channel_id>`) to whoever drives the MCP client. Each visitor gets
 their own channel, and it is reclaimed automatically after `offline_ttl_seconds` once the tab closes.
+
+## OAuth client authorization
+
+Public MCP OAuth is opt-in and requires explicit channel grants. Provider WebSocket credentials remain separate. See [OAuth configuration, extension contracts, transport gates and deployment limits](oauth.md). The embedded authorization server is blocked at startup and remains unimplemented.

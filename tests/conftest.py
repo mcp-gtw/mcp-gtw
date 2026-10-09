@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 from support import FakeWebSocket
 
-from mcp_gtw.config import GatewaySettings
+from mcpgtw.config import GatewaySettings
 
 
 @pytest.fixture

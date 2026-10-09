@@ -5,12 +5,12 @@ import logging
 import time
 from collections.abc import Iterable
 
-from mcp_gtw.channel import Channel
-from mcp_gtw.config import GatewaySettings
-from mcp_gtw.errors import ChannelCapacityError
-from mcp_gtw.expiry import ExpiryPolicy, TtlExpiryPolicy
-from mcp_gtw.listeners import GatewayListener
-from mcp_gtw.tokens import SecretsTokenProvider, TokenProvider
+from mcpgtw.channel import Channel
+from mcpgtw.config import GatewaySettings
+from mcpgtw.errors import ChannelCapacityError
+from mcpgtw.expiry import ExpiryPolicy, TtlExpiryPolicy
+from mcpgtw.listeners import GatewayListener
+from mcpgtw.tokens import SecretsTokenProvider, TokenProvider
 
 logger = logging.getLogger(__name__)
 

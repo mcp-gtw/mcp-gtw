@@ -40,13 +40,13 @@ uv add mcp-gtw
 ## 🚀 The smallest gateway
 
 ```python
-from mcp_gtw.gateway import Gateway
+from mcpgtw.gateway import Gateway
 
 app = Gateway().create_app()
 ```
 
 ```bash
-uv run python -m mcp_gtw.main
+uv run python -m mcpgtw.main
 ```
 
 This publishes a real MCP endpoint at `/mcp`, a private provider WebSocket at `/provider` and a health
@@ -68,18 +68,21 @@ TLS: [deployment](docs/deployment.md).
 Subclass `Gateway` and override the hooks to attach your own domain logic:
 
 ```python
-from mcp_gtw.channel import Channel
-from mcp_gtw.gateway import Gateway
+from mcpgtw.channel import Channel
+from mcpgtw.gateway import Gateway
+
 
 class MyGateway(Gateway):
     mcp_server_name = "my-app"
 
-    async def on_provider_connected(self, channel: Channel) -> None:
-        ...  # a provider session just came online
+    async def on_provider_connected(
+        self, channel: Channel
+    ) -> None: ...  # a provider session just came online
 
     def register_routes(self, app) -> None:
         super().register_routes(app)
         ...  # add your own HTTP and WebSocket routes
+
 
 app = MyGateway().create_app()
 ```
@@ -113,14 +116,14 @@ override point, [Extensibility](docs/extensibility.md) for the strategy contract
 
 ```text
 .
-├── src/mcp_gtw/     # the library
+├── src/mcpgtw/     # the library
 ├── tests/               # unit and integration tests (100% coverage)
 └── docs/                # the guides linked above
 ```
 
 ## ✅ Requirements
 
-- Python 3.12+ — tested on 3.12, 3.13 and 3.14 in CI (3.12 is the pinned local and Docker version)
+- Python 3.12+ — tested on 3.12, 3.13 and 3.14 in CI (3.12 is the pinned local version; Docker uses 3.14)
 - Any MCP client (Claude Code, Cursor, the MCP Inspector, …)
 
 ## 💜 Support
@@ -131,3 +134,7 @@ If this project saved you time, consider supporting it:
 Made with care by [Paulo Coutinho](https://github.com/paulocoutinhox).
 
 Licensed under [MIT](LICENSE.md).
+
+## OAuth client authorization
+
+Public MCP OAuth is opt-in and requires explicit channel grants. Provider WebSocket credentials remain separate. See [OAuth configuration, extension contracts, transport gates and deployment limits](docs/oauth.md). The embedded authorization server is blocked at startup and remains unimplemented.
