@@ -1,10 +1,10 @@
-# CLAUDE.md
+# AGENTS.md
 
 Guidance for working in this repository.
 
 ## How to use this file
 
-**CLAUDE.md is a map, not a copy.** Each subject gets a one-line essence here and a pointer to the
+**AGENTS.md is a map, not a copy.** Each subject gets a one-line essence here and a pointer to the
 `docs/*.md` that owns the full detail. Never duplicate doc content into this file — when the code
 changes, update the doc and keep the pointer accurate. The docs are the source of truth for
 behaviour. This file is the source of truth for the conventions and repo mechanics that have no doc
@@ -21,7 +21,7 @@ completion, logging, progress, and reverse calls (sampling, elicitation). The ga
 publishes and routes.
 
 It is a **library**: you build a real app by subclassing `Gateway`, never by editing this package.
-This repo is published to PyPI as `mcp-gtw` (the import package stays `mcp_gtw`).
+This repo is published to PyPI as `mcp-gtw` (the import package stays `mcpgtw`).
 
 ## Subjects (essence + where the detail lives)
 
@@ -56,7 +56,7 @@ This repo is published to PyPI as `mcp-gtw` (the import package stays `mcp_gtw`)
   (`GATEWAY_PORT` wins) so PaaS one-click deploys just work. Table:
   [docs/configuration.md](docs/configuration.md).
 - **Runtime, limits & performance** — everything runs on one event loop and is fully async, with no
-  blocking IO on request/websocket paths. Every per-request/per-connection hot path is O(1): token
+  blocking IO on request/websocket paths. Default token-mode request/connection lookup paths are O(1): token
   resolution is a dict lookup, the origin check is a `frozenset` membership, tool dispatch is a dict
   lookup, so it scales to many thousands of channels and connections. Tool validators are compiled
   once at registration, not per call. A channel holds at most one live provider socket (a new
@@ -67,7 +67,7 @@ This repo is published to PyPI as `mcp-gtw` (the import package stays `mcp_gtw`)
   an `is not None` check, secure by default, unlimited by choice. The two **process-safety** limits
   (`maximum_websocket_message_bytes`, `maximum_json_depth`) are always enforced and cannot be disabled,
   so a single frame can never exhaust memory or the stack. The bundled runner
-  (`python -m mcp_gtw.main`) sets the transport frame limit (`ws_max_size`) to
+  (`python -m mcpgtw.main`) sets the transport frame limit (`ws_max_size`) to
   `maximum_websocket_message_bytes` and applies `maximum_concurrent_connections` — so run it that way
   in production, not bare `uvicorn`. Details: [docs/security.md](docs/security.md).
 - **Admin dashboard** — off by default and fully inert when off: the `/admin` and `/admin/stats`
@@ -91,7 +91,7 @@ This repo is published to PyPI as `mcp-gtw` (the import package stays `mcp_gtw`)
 - **Quickstart / MCP clients / testing** — [docs/quickstart.md](docs/quickstart.md),
   [docs/mcp-clients.md](docs/mcp-clients.md), [docs/testing.md](docs/testing.md).
 
-## Key modules (`src/mcp_gtw/`)
+## Key modules (`src/mcpgtw/`)
 
 - `gateway.py` — the `Gateway` class, the composition root: it wires the strategies below, is the
   FastAPI app factory, CORS, routes (`/mcp`, `/provider`, `/health`, `/`, `/logo.svg`, favicons,
@@ -130,7 +130,7 @@ This repo is published to PyPI as `mcp-gtw` (the import package stays `mcp_gtw`)
 
 - Managed with `uv`. Ruff with `line-length = 100`, formatter is the source of truth.
 - **100% branch coverage is a hard gate** (`fail_under = 100`). Every change keeps it at 100%.
-- `__init__.py` files are **empty** — import from submodules (`from mcp_gtw.gateway import Gateway`).
+- `__init__.py` files are **empty** — import from submodules (`from mcpgtw.gateway import Gateway`).
 - Code and comments are in **English**. Comments are **rare** — only for genuinely non-obvious intent.
   No narrating comments, no artificial section separators, no semicolons splitting sentences.
 - **Separate blocks with a blank line.** A compound block (`if`/`for`/`while`/`try`/`with`/`def`/
@@ -143,7 +143,7 @@ This repo is published to PyPI as `mcp-gtw` (the import package stays `mcp_gtw`)
 ## Supported Python
 
 - `requires-python = ">=3.12"`. Supported versions are **3.12, 3.13, 3.14**.
-- `.python-version` pins **3.12** for local `uv` and the Docker image (`python:3.12-slim`).
+- `.python-version` pins **3.12** for local `uv`; Docker uses `python:3.14-slim`.
 - CI (`.github/workflows/ci.yml`) runs the full `make install` + `make lint` + `make coverage` matrix
   across all three versions; `UV_PYTHON` selects the interpreter per matrix leg.
 
@@ -189,3 +189,5 @@ change. Treat a doc that describes something the code no longer does as a bug.
   file free of other `{`/`}`. `web/admin.html` is served raw (its JS braces are fine).
 - Package data (`web/*`, `py.typed`) must ship in the wheel — hatchling includes
   everything under the package.
+
+- **OAuth** — public MCP authorization and private provider credential boundaries: [docs/oauth.md](docs/oauth.md).

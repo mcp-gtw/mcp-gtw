@@ -4,10 +4,10 @@ import asyncio
 
 from support import FakeWebSocket
 
-from mcp_gtw.config import GatewaySettings
-from mcp_gtw.errors import ChannelCapacityError
-from mcp_gtw.gateway import Gateway
-from mcp_gtw.registry import ChannelRegistry
+from mcpgtw.config import GatewaySettings
+from mcpgtw.errors import ChannelCapacityError
+from mcpgtw.gateway import Gateway
+from mcpgtw.registry import ChannelRegistry
 
 
 async def test_concurrent_creation_stays_unique(settings: GatewaySettings) -> None:
@@ -78,7 +78,7 @@ async def test_pending_call_flood_is_capped(settings: GatewaySettings, move_tool
         ]
     )
 
-    assert all(result.isError for result in results)
+    assert all(result.is_error for result in results)
     assert any("Too many pending calls" in result.content[0].text for result in results)
 
 

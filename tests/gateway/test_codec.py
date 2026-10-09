@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from mcp_gtw.codec import JsonProtocolCodec, ProtocolCodec
+from mcpgtw.codec import JsonProtocolCodec, ProtocolCodec
 
 
 def test_decode_accepts_objects() -> None:

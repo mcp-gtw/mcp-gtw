@@ -37,11 +37,11 @@ from typing import ClassVar
 from fastapi import FastAPI, HTTPException
 from starlette.requests import Request
 
-from mcp_gtw.gateway import Gateway
+from mcpgtw.gateway import Gateway
 
 
 class LoginGateway(Gateway):
-    users: ClassVar[dict[str, str]] = {"alice": "s3cret"}   # replace with your user store
+    users: ClassVar[dict[str, str]] = {"alice": "s3cret"}  # replace with your user store
 
     def register_routes(self, app: FastAPI) -> None:
         super().register_routes(app)
@@ -81,13 +81,11 @@ This is one `authenticator_class` swap.
 import hashlib
 import re
 
-from mcp_gtw.authenticator import TokenAuthenticator
-from mcp_gtw.errors import ChannelCapacityError
-from mcp_gtw.gateway import Gateway
+from mcpgtw.authenticator import TokenAuthenticator
+from mcpgtw.errors import ChannelCapacityError
+from mcpgtw.gateway import Gateway
 
-_UUID = re.compile(
-    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
-)
+_UUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
 
 class OwnTokenAuthenticator(TokenAuthenticator):
@@ -163,7 +161,8 @@ client identifier non-secret and derive the real token on the server with a `Tok
 ```python
 import hmac
 
-from mcp_gtw.tokens import SecretsTokenProvider
+from mcpgtw.tokens import SecretsTokenProvider
+
 
 class DerivedTokenProvider(SecretsTokenProvider):
     def __init__(self, secret: bytes) -> None:
@@ -177,3 +176,7 @@ Wire it with `token_provider_class = DerivedTokenProvider`. An authenticator rea
 `subject` from the connection, calls `self._registry.tokens.derive(subject)` for the unguessable
 token, and upserts the channel exactly as in recipe 3. The client stores only its `subject`; the
 secret never leaves the server.
+
+## OAuth client authorization
+
+Public MCP OAuth is opt-in and requires explicit channel grants. Provider WebSocket credentials remain separate. See [OAuth configuration, extension contracts, transport gates and deployment limits](oauth.md). The embedded authorization server is blocked at startup and remains unimplemented.

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from mcp_gtw.channel import Channel
-from mcp_gtw.config import GatewaySettings
-from mcp_gtw.listeners import GatewayListener
+from mcpgtw.channel import Channel
+from mcpgtw.config import GatewaySettings
+from mcpgtw.listeners import GatewayListener
 
 
 async def test_default_hooks_are_noops(settings: GatewaySettings) -> None:

@@ -197,3 +197,7 @@ async with streamable_http_client("http://127.0.0.1:8000/mcp", http_client=http)
 | Tools list is empty | The provider page is not connected, or registered no tools. |
 | Tool call times out | The handler never returned, or the provider disconnected or its tab is closed. |
 | `403 Origin not allowed` | An `Origin` header is set and not in `GATEWAY_ALLOWED_MCP_ORIGINS`. |
+
+## OAuth client authorization
+
+Public MCP OAuth is opt-in and requires explicit channel grants. Provider WebSocket credentials remain separate. See [OAuth configuration, extension contracts, transport gates and deployment limits](oauth.md). The embedded authorization server is blocked at startup and remains unimplemented.

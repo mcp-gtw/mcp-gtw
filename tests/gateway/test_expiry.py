@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from mcp_gtw.expiry import ExpiryPolicy, TtlExpiryPolicy
+from mcpgtw.expiry import ExpiryPolicy, TtlExpiryPolicy
 
 
 def test_initial_deadline_uses_offline_ttl_by_default() -> None:

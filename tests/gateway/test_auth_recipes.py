@@ -6,17 +6,17 @@ import json
 import re
 from typing import ClassVar
 
-import httpx
+import httpx2 as httpx
 import pytest
 from fastapi import FastAPI, HTTPException
-from httpx import ASGITransport
+from httpx2 import ASGITransport
 from starlette.requests import Request
 from support import FakeProviderWebSocket
 
-from mcp_gtw.authenticator import TokenAuthenticator
-from mcp_gtw.config import GatewaySettings
-from mcp_gtw.errors import ChannelCapacityError
-from mcp_gtw.gateway import Gateway
+from mcpgtw.authenticator import TokenAuthenticator
+from mcpgtw.config import GatewaySettings
+from mcpgtw.errors import ChannelCapacityError
+from mcpgtw.gateway import Gateway
 
 _UUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 _SAMPLE_UUID = "550e8400-e29b-41d4-a716-446655440000"

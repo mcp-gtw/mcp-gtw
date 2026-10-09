@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from mcp_gtw.gateway import Gateway
+from mcpgtw.gateway import Gateway
 
 logging.basicConfig(
     level=logging.INFO,
@@ -24,6 +24,7 @@ def run() -> None:
         ws_max_size=settings.maximum_websocket_message_bytes,
         limit_concurrency=settings.maximum_concurrent_connections,
         proxy_headers=True,
+        access_log=settings.oauth_mode == "off",
     )
 
 

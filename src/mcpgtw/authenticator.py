@@ -3,13 +3,13 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
-from mcp_gtw.channel import Channel
+from mcpgtw.channel import Channel
 
 if TYPE_CHECKING:
     from fastapi import WebSocket
     from starlette.requests import Request
 
-    from mcp_gtw.registry import ChannelRegistry
+    from mcpgtw.registry import ChannelRegistry
 
 _BEARER_PREFIX = "Bearer "
 

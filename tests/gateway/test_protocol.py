@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from mcp_gtw import protocol
+from mcpgtw import protocol
 
 
 def test_message_builders() -> None:

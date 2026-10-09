@@ -5,16 +5,16 @@ import json
 import pytest
 from support import FakeProviderWebSocket
 
-from mcp_gtw.authenticator import Authenticator, TokenAuthenticator
-from mcp_gtw.channel import Channel
-from mcp_gtw.codec import ProtocolCodec
-from mcp_gtw.config import GatewaySettings
-from mcp_gtw.errors import ChannelCapacityError
-from mcp_gtw.expiry import TtlExpiryPolicy
-from mcp_gtw.gateway import Gateway
-from mcp_gtw.origin import OriginPolicy
-from mcp_gtw.registry import ChannelRegistry
-from mcp_gtw.tokens import SecretsTokenProvider
+from mcpgtw.authenticator import Authenticator, TokenAuthenticator
+from mcpgtw.channel import Channel
+from mcpgtw.codec import ProtocolCodec
+from mcpgtw.config import GatewaySettings
+from mcpgtw.errors import ChannelCapacityError
+from mcpgtw.expiry import TtlExpiryPolicy
+from mcpgtw.gateway import Gateway
+from mcpgtw.origin import OriginPolicy
+from mcpgtw.registry import ChannelRegistry
+from mcpgtw.tokens import SecretsTokenProvider
 
 
 class PrefixTokens(SecretsTokenProvider):

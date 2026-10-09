@@ -30,4 +30,10 @@ build: ## Build the wheel and sdist for PyPI
 	uv build
 
 run: ## Serve the bare generic gateway on 127.0.0.1:8000
-	uv run python -m mcp_gtw.main
+	uv run python -m mcpgtw.main
+
+sdk-smoke: ## Exercise real JavaScript providers with OAuth and Token MCP clients
+	uv run python tests/e2e/sdk_run.py
+
+oauth-benchmark: ## Measure 1000-channel controller capacity with a test-only verifier
+	uv run python tests/e2e/benchmark.py

@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from mcp_gtw.config import GatewaySettings
+from mcpgtw.config import GatewaySettings
 
 
 def test_parse_csv_list_from_string() -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import json
 import logging
@@ -8,37 +9,51 @@ from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any
 
+import httpx
 import mcp.types as types
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from mcp.server.lowlevel import Server
-from mcp.server.lowlevel.helper_types import ReadResourceContents
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.server.transport_security import TransportSecuritySettings
-from pydantic import AnyUrl
 from starlette.requests import Request
+from starlette.routing import Route
 from starlette.types import Receive, Scope, Send
 
-from mcp_gtw import protocol
-from mcp_gtw.authenticator import Authenticator, TokenAuthenticator
-from mcp_gtw.channel import Channel
-from mcp_gtw.codec import JsonProtocolCodec, ProtocolCodec
-from mcp_gtw.config import PROTOCOL_VERSION, GatewaySettings
-from mcp_gtw.errors import (
+from mcpgtw import protocol
+from mcpgtw.authenticator import Authenticator, TokenAuthenticator
+from mcpgtw.channel import Channel
+from mcpgtw.codec import JsonProtocolCodec, ProtocolCodec
+from mcpgtw.config import PROTOCOL_VERSION, GatewaySettings
+from mcpgtw.errors import (
     ChannelOfflineError,
     ChannelReplacedError,
     GatewayConfigurationError,
     GatewayError,
     ProviderMessageError,
 )
-from mcp_gtw.expiry import ExpiryPolicy, TtlExpiryPolicy
-from mcp_gtw.listeners import GatewayListener
-from mcp_gtw.origin import ListOriginPolicy, OriginPolicy
-from mcp_gtw.registry import ChannelRegistry
-from mcp_gtw.tokens import SecretsTokenProvider, TokenProvider
+from mcpgtw.expiry import ExpiryPolicy, TtlExpiryPolicy
+from mcpgtw.listeners import GatewayListener
+from mcpgtw.oauth.access_error import McpAccessError
+from mcpgtw.oauth.canonical_endpoint import CanonicalMcpEndpoint
+from mcpgtw.oauth.channel_access import ChannelAccessPolicy
+from mcpgtw.oauth.client_access import McpClientAccessController, TokenMcpAccessController
+from mcpgtw.oauth.hybrid_client_access import HybridMcpAccessController
+from mcpgtw.oauth.introspection_verifier import IntrospectionAccessTokenVerifier
+from mcpgtw.oauth.jwt_verifier import JwtAccessTokenVerifier
+from mcpgtw.oauth.log_filter import OAuthLogFilter
+from mcpgtw.oauth.oauth_client_access import OAuthMcpAccessController
+from mcpgtw.oauth.rate_limit import OAuthRateLimitPolicy
+from mcpgtw.oauth.resource_metadata import OAuthMetadataPublisher
+from mcpgtw.oauth.session_binding import McpSessionBindingStore
+from mcpgtw.oauth.token_verifier import AccessTokenVerifier
+from mcpgtw.origin import ListOriginPolicy, OriginPolicy
+from mcpgtw.registry import ChannelRegistry
+from mcpgtw.tokens import SecretsTokenProvider, TokenProvider
 
 logger = logging.getLogger(__name__)
+_OAUTH_LOG_FILTER = OAuthLogFilter()
 
 SCOPE_CHANNEL_KEY = "gateway_channel_id"
 
@@ -79,6 +94,8 @@ class Gateway(GatewayListener):
     codec_class: type[ProtocolCodec] = JsonProtocolCodec
     authenticator_class: type[Authenticator] = TokenAuthenticator
 
+    mcp_access_controller_class: type[McpClientAccessController] = TokenMcpAccessController
+
     mcp_server_name: str = "mcp-gtw"
 
     def __init__(
@@ -92,8 +109,17 @@ class Gateway(GatewayListener):
         expiry_policy: ExpiryPolicy | None = None,
         registry: ChannelRegistry | None = None,
         authenticator: Authenticator | None = None,
+        mcp_access_controller: McpClientAccessController | None = None,
+        access_token_verifier: AccessTokenVerifier | None = None,
+        channel_access: ChannelAccessPolicy | None = None,
+        session_bindings: McpSessionBindingStore | None = None,
+        oauth_rate_limit: OAuthRateLimitPolicy | None = None,
+        static_channel_eligible: Callable[[Channel], bool] | None = None,
     ) -> None:
         self.settings = settings or self.settings_class()
+
+        if self.settings.oauth_mode != "off":
+            logging.getLogger("uvicorn.error").addFilter(_OAUTH_LOG_FILTER)
 
         if self.settings.admin_enabled and not self.settings.admin_key:
             raise GatewayConfigurationError(
@@ -122,9 +148,84 @@ class Gateway(GatewayListener):
         )
         self.registry.add_listener(self)
         self.authenticator = authenticator or self.authenticator_class(self.registry)
+        self.oauth_rate_limit = oauth_rate_limit or OAuthRateLimitPolicy(
+            self.settings.oauth_rate_limit_requests,
+            self.settings.oauth_rate_limit_window_seconds,
+            self.settings.oauth_rate_limit_maximum_keys,
+        )
+        self.oauth_metadata = (
+            OAuthMetadataPublisher(self.settings) if self.settings.oauth_mode != "off" else None
+        )
+        self.session_bindings = session_bindings or McpSessionBindingStore(
+            self.settings.oauth_maximum_sessions, self.settings.mcp_session_idle_timeout_seconds
+        )
+        self._oauth_http_client: httpx.AsyncClient | None = None
+        self.mcp_access_controller = self._build_access_controller(
+            mcp_access_controller, access_token_verifier, channel_access, static_channel_eligible
+        )
         self.server = self._build_server()
         self.manager = self._build_manager()
         self._home_html = _HOME_TEMPLATE.format(name=self.settings.app_name)
+
+    def _build_access_controller(
+        self,
+        controller: McpClientAccessController | None,
+        verifier: AccessTokenVerifier | None,
+        channel_access: ChannelAccessPolicy | None,
+        static_eligible: Callable[[Channel], bool] | None,
+    ) -> McpClientAccessController:
+        if self.settings.oauth_mode == "embedded":
+            raise GatewayConfigurationError(
+                "Embedded OAuth requires a complete durable authorization server; "
+                "activation is blocked"
+            )
+
+        if controller is not None:
+            return controller
+
+        token_access = self.mcp_access_controller_class(self.authenticator)
+
+        if self.settings.oauth_mode == "off":
+            return token_access
+
+        if channel_access is None:
+            raise GatewayConfigurationError("OAuth requires an explicit channel access policy")
+
+        if self.settings.oauth_allow_static_mcp_tokens and static_eligible is None:
+            raise GatewayConfigurationError(
+                "Hybrid OAuth requires explicit static channel eligibility"
+            )
+
+        if verifier is None:
+            if self.settings.oauth_token_verifier == "custom":
+                raise GatewayConfigurationError("Custom OAuth verifier must be injected")
+
+            self._oauth_http_client = httpx.AsyncClient(
+                timeout=self.settings.oauth_http_timeout_seconds,
+                follow_redirects=False,
+                trust_env=False,
+            )
+            verifier = (
+                JwtAccessTokenVerifier(self.settings, self._oauth_http_client)
+                if self.settings.oauth_token_verifier == "jwt"
+                else IntrospectionAccessTokenVerifier(self.settings, self._oauth_http_client)
+            )
+
+        self.registry.add_listener(channel_access)
+        oauth_access = OAuthMcpAccessController(
+            self.settings, self.registry, verifier, channel_access
+        )
+
+        if not self.settings.oauth_allow_static_mcp_tokens:
+            return oauth_access
+
+        return HybridMcpAccessController(
+            self.registry,
+            token_access,
+            oauth_access,
+            static_eligible,
+            self.settings.oauth_max_token_bytes,
+        )
 
     async def create_channel(self, **kwargs: Any) -> Channel:
         return await self.registry.create_channel(**kwargs)
@@ -146,6 +247,9 @@ class Gateway(GatewayListener):
             allow_origins=self.settings.cors_allow_origins,
             allow_methods=["*"],
             allow_headers=["*"],
+            expose_headers=["WWW-Authenticate", "Mcp-Session-Id"]
+            if self.settings.oauth_mode != "off"
+            else [],
         )
 
     def register_routes(self, app: FastAPI) -> None:
@@ -159,6 +263,27 @@ class Gateway(GatewayListener):
                 self._web_file(filename, media_type),
                 methods=["GET"],
                 include_in_schema=False,
+            )
+
+        if self.oauth_metadata is not None:
+            for path in {
+                self.oauth_metadata.path,
+                "/.well-known/oauth-protected-resource/mcp",
+                "/.well-known/oauth-protected-resource",
+            }:
+                if self.settings.admin_enabled and (
+                    self.settings.admin_path == path
+                    or self.settings.admin_path.startswith(path + "/")
+                ):
+                    raise GatewayConfigurationError("Admin path collides with OAuth metadata")
+
+                app.add_api_route(path, self.oauth_metadata.metadata, methods=["GET"])
+
+        if self.oauth_metadata is not None:
+            app.router.routes.append(
+                Route(
+                    "/mcp", CanonicalMcpEndpoint(self.mcp_asgi), methods=["GET", "POST", "DELETE"]
+                )
             )
 
         app.mount("/mcp", self.mcp_asgi)
@@ -241,6 +366,10 @@ class Gateway(GatewayListener):
                     await reaper
 
                 await self.registry.close_all()
+                self.session_bindings.clear()
+
+                if self._oauth_http_client is not None:
+                    await self._oauth_http_client.aclose()
 
     @contextlib.asynccontextmanager
     async def serve(self) -> AsyncIterator[None]:
@@ -260,92 +389,107 @@ class Gateway(GatewayListener):
                 logger.info("Reaped %d expired channels", removed)
 
     def _build_server(self) -> Server:
-        server = Server(
+        def context(ctx: Any) -> tuple[Channel, Any, str | int | None]:
+            channel = self.channel_for_scope(ctx.request.scope)
+            channel.remember_mcp_session(ctx.session)
+            progress_token = ctx.meta.progress_token if ctx.meta else None
+            return channel, ctx.session, progress_token
+
+        async def list_tools(ctx: Any, params: Any) -> types.ListToolsResult:
+            channel, _, _ = context(ctx)
+            return types.ListToolsResult(tools=channel.list_tools())
+
+        async def call_tool(ctx: Any, params: Any) -> types.CallToolResult:
+            channel, session, progress_token = context(ctx)
+            return await channel.execute_tool(
+                name=params.name,
+                arguments=params.arguments or {},
+                session=session,
+                progress_token=progress_token,
+            )
+
+        async def list_resources(ctx: Any, params: Any) -> types.ListResourcesResult:
+            channel, _, _ = context(ctx)
+            return types.ListResourcesResult(resources=channel.list_resources())
+
+        async def list_templates(ctx: Any, params: Any) -> types.ListResourceTemplatesResult:
+            channel, _, _ = context(ctx)
+            return types.ListResourceTemplatesResult(
+                resource_templates=channel.list_resource_templates()
+            )
+
+        async def read_resource(ctx: Any, params: Any) -> types.ReadResourceResult:
+            channel, session, progress_token = context(ctx)
+            contents = await channel.read_resource(
+                str(params.uri), session=session, progress_token=progress_token
+            )
+            return types.ReadResourceResult(
+                contents=[
+                    types.TextResourceContents(
+                        uri=params.uri, text=item.content, mime_type=item.mime_type, meta=item.meta
+                    )
+                    if isinstance(item.content, str)
+                    else types.BlobResourceContents(
+                        uri=params.uri,
+                        blob=base64.b64encode(item.content).decode(),
+                        mime_type=item.mime_type,
+                        meta=item.meta,
+                    )
+                    for item in contents
+                ]
+            )
+
+        async def subscribe(ctx: Any, params: Any) -> types.EmptyResult:
+            channel, session, _ = context(ctx)
+            await channel.subscribe(str(params.uri), session)
+            return types.EmptyResult()
+
+        async def unsubscribe(ctx: Any, params: Any) -> types.EmptyResult:
+            channel, session, _ = context(ctx)
+            await channel.unsubscribe(str(params.uri), session)
+            return types.EmptyResult()
+
+        async def list_prompts(ctx: Any, params: Any) -> types.ListPromptsResult:
+            channel, _, _ = context(ctx)
+            return types.ListPromptsResult(prompts=channel.list_prompts())
+
+        async def get_prompt(ctx: Any, params: Any) -> types.GetPromptResult:
+            channel, session, progress_token = context(ctx)
+            return await channel.get_prompt(
+                params.name, params.arguments, session=session, progress_token=progress_token
+            )
+
+        async def complete(ctx: Any, params: Any) -> types.CompleteResult:
+            channel, _, _ = context(ctx)
+            dump = {"mode": "json", "by_alias": True, "exclude_none": True}
+            result = await channel.complete(
+                params.ref.model_dump(**dump),
+                params.argument.model_dump(**dump),
+                params.context.model_dump(**dump) if params.context else None,
+            )
+            return types.CompleteResult(completion=result)
+
+        async def set_logging(ctx: Any, params: Any) -> types.EmptyResult:
+            channel, session, _ = context(ctx)
+            channel.set_log_level(session, params.level)
+            return types.EmptyResult()
+
+        return Server(
             self.mcp_server_name,
             version=self.settings.app_version,
             instructions=self.instructions(),
+            on_list_tools=list_tools,
+            on_call_tool=call_tool,
+            on_list_resources=list_resources,
+            on_list_resource_templates=list_templates,
+            on_read_resource=read_resource,
+            on_subscribe_resource=subscribe,
+            on_unsubscribe_resource=unsubscribe,
+            on_list_prompts=list_prompts,
+            on_get_prompt=get_prompt,
+            on_completion=complete,
+            on_set_logging_level=set_logging,
         )
-        gateway = self
-
-        def context() -> tuple[Channel, Any, str | int | None]:
-            request = server.request_context
-            channel = gateway.channel_for_scope(request.request.scope)
-            channel.remember_mcp_session(request.session)
-            progress_token = request.meta.progressToken if request.meta else None
-            return channel, request.session, progress_token
-
-        @server.list_tools()
-        async def list_tools() -> list[types.Tool]:
-            channel, _, _ = context()
-            return channel.list_tools()
-
-        # input validation is done per channel because a single server serves every channel
-        @server.call_tool(validate_input=False)
-        async def call_tool(name: str, arguments: dict[str, Any]) -> types.CallToolResult:
-            channel, session, progress_token = context()
-            return await channel.execute_tool(
-                name=name, arguments=arguments or {}, session=session, progress_token=progress_token
-            )
-
-        @server.list_resources()
-        async def list_resources() -> list[types.Resource]:
-            channel, _, _ = context()
-            return channel.list_resources()
-
-        @server.list_resource_templates()
-        async def list_resource_templates() -> list[types.ResourceTemplate]:
-            channel, _, _ = context()
-            return channel.list_resource_templates()
-
-        @server.read_resource()
-        async def read_resource(uri: AnyUrl) -> list[ReadResourceContents]:
-            channel, session, progress_token = context()
-            return await channel.read_resource(
-                str(uri), session=session, progress_token=progress_token
-            )
-
-        @server.subscribe_resource()
-        async def subscribe_resource(uri: AnyUrl) -> None:
-            channel, session, _ = context()
-            await channel.subscribe(str(uri), session)
-
-        @server.unsubscribe_resource()
-        async def unsubscribe_resource(uri: AnyUrl) -> None:
-            channel, session, _ = context()
-            await channel.unsubscribe(str(uri), session)
-
-        @server.list_prompts()
-        async def list_prompts() -> list[types.Prompt]:
-            channel, _, _ = context()
-            return channel.list_prompts()
-
-        @server.get_prompt()
-        async def get_prompt(name: str, arguments: dict[str, str] | None) -> types.GetPromptResult:
-            channel, session, progress_token = context()
-            return await channel.get_prompt(
-                name, arguments, session=session, progress_token=progress_token
-            )
-
-        @server.completion()
-        async def complete(
-            ref: types.PromptReference | types.ResourceTemplateReference,
-            argument: types.CompletionArgument,
-            argument_context: types.CompletionContext | None,
-        ) -> types.Completion:
-            channel, _, _ = context()
-            dump = {"mode": "json", "by_alias": True, "exclude_none": True}
-            return await channel.complete(
-                ref.model_dump(**dump),
-                argument.model_dump(**dump),
-                argument_context.model_dump(**dump) if argument_context else None,
-            )
-
-        @server.set_logging_level()
-        async def set_logging_level(level: types.LoggingLevel) -> None:
-            channel, session, _ = context()
-            channel.set_log_level(session, level)
-
-        return server
 
     def _build_manager(self) -> StreamableHTTPSessionManager:
         idle_timeout = (
@@ -380,17 +524,31 @@ class Gateway(GatewayListener):
             await self._json_response(send, 403, {"error": "Origin not allowed"})
             return
 
-        channel = await self.authenticator.authenticate_client(request)
+        address = request.client.host if request.client else "unknown"
 
-        if channel is None:
+        if self.oauth_metadata is not None and not self.oauth_rate_limit.admit(address):
             await self._json_response(
-                send,
-                401,
-                {"error": "Unauthorized MCP client"},
-                {"www-authenticate": 'Bearer realm="mcp"'},
+                send, 429, {"error": "Request budget exceeded"}, {"retry-after": "1"}
             )
             return
 
+        try:
+            authorized = await self.mcp_access_controller.authorize(request)
+        except McpAccessError as exc:
+            challenge = (
+                self.oauth_metadata.challenge(exc.reason)
+                if self.oauth_metadata
+                else 'Bearer realm="mcp"'
+            )
+            await self._json_response(
+                send,
+                exc.status_code,
+                {"error": "MCP access denied"},
+                {"www-authenticate": challenge, "cache-control": "no-store"},
+            )
+            return
+
+        channel = authorized.channel
         requested_channel = scope["path"].removeprefix(scope.get("root_path", "")).strip("/")
 
         if requested_channel and requested_channel != channel.channel_id:
@@ -398,7 +556,61 @@ class Gateway(GatewayListener):
             return
 
         scope[SCOPE_CHANNEL_KEY] = channel.channel_id
-        await self.manager.handle_request(scope, receive, send)
+        scope["gateway_access_context"] = authorized.context
+
+        if self.oauth_metadata is None:
+            await self.manager.handle_request(scope, receive, send)
+            return
+
+        session_ids = request.headers.getlist("mcp-session-id")
+        session_id = session_ids[0] if len(session_ids) == 1 else None
+
+        if session_ids and (
+            len(session_ids) != 1
+            or self.settings.mcp_stateless
+            or not self.session_bindings.accepts(session_id, authorized.context)
+        ):
+            await self._json_response(send, 404, {"error": "Unknown MCP session"})
+            return
+
+        response_started = False
+
+        async def guarded_send(message: Any) -> None:
+            nonlocal response_started
+            current = await self.mcp_access_controller.authorize(request)
+
+            if (
+                self.registry.get(channel.channel_id) is not channel
+                or current.context.principal_id != authorized.context.principal_id
+            ):
+                raise McpAccessError("channel_forbidden")
+
+            if message["type"] == "http.response.start":
+                for key, value in message.get("headers", []):
+                    if key.lower() == b"mcp-session-id" and not self.session_bindings.bind(
+                        value.decode(), current.context
+                    ):
+                        raise McpAccessError("invalid_session")
+
+                if request.method == "DELETE" and message["status"] < 300 and session_id:
+                    self.session_bindings.remove(session_id)
+
+            await send(message)
+            response_started = True
+
+        try:
+            await self.manager.handle_request(scope, receive, guarded_send)
+        except McpAccessError as exc:
+            if session_id:
+                self.session_bindings.remove(session_id)
+
+            if response_started:
+                await send({"type": "http.response.body", "body": b"", "more_body": False})
+            else:
+                await self._json_response(send, exc.status_code, {"error": "MCP access denied"})
+
+    async def on_channel_removed(self, channel: Channel) -> None:
+        self.session_bindings.remove_channel(channel.channel_id)
 
     async def provider_endpoint(self, websocket: WebSocket) -> None:
         if not self.provider_origins.allows(websocket.headers.get("origin")):

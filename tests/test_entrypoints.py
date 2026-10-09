@@ -8,13 +8,13 @@ from fastapi import FastAPI
 
 
 def test_main_exposes_app() -> None:
-    import mcp_gtw.main as gateway_main
+    import mcpgtw.main as gateway_main
 
     assert isinstance(gateway_main.app, FastAPI)
 
 
 def test_run_configures_uvicorn_from_settings(monkeypatch: pytest.MonkeyPatch) -> None:
-    import mcp_gtw.main as gateway_main
+    import mcpgtw.main as gateway_main
 
     captured: dict = {}
 

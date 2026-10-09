@@ -15,17 +15,17 @@ import mcp.types as types
 from jsonschema import Draft202012Validator, ValidationError
 from mcp.server.lowlevel.helper_types import ReadResourceContents
 
-from mcp_gtw import protocol
-from mcp_gtw.compiled_tool import CompiledTool
-from mcp_gtw.config import GatewaySettings
-from mcp_gtw.errors import (
+from mcpgtw import protocol
+from mcpgtw.compiled_tool import CompiledTool
+from mcpgtw.config import GatewaySettings
+from mcpgtw.errors import (
     ChannelOfflineError,
     ChannelReplacedError,
     ProviderMessageError,
     ProviderRequestError,
 )
-from mcp_gtw.json_websocket import JsonWebSocket
-from mcp_gtw.pending_request import PendingRequest
+from mcpgtw.json_websocket import JsonWebSocket
+from mcpgtw.pending_request import PendingRequest
 
 logger = logging.getLogger(__name__)
 
@@ -196,7 +196,7 @@ class Channel:
                 self._resources = resources
         elif registry == protocol.RESOURCE_TEMPLATES:
             templates = self._compile_named(
-                items, types.ResourceTemplate, "resource template", lambda t: t.uriTemplate
+                items, types.ResourceTemplate, "resource template", lambda t: t.uri_template
             )
 
             async with self._state_lock:
@@ -247,10 +247,10 @@ class Channel:
                 raise ProviderMessageError(f"Duplicate tool name: {tool.name}")
 
             try:
-                Draft202012Validator.check_schema(tool.inputSchema)
+                Draft202012Validator.check_schema(tool.input_schema)
 
-                if tool.outputSchema is not None:
-                    Draft202012Validator.check_schema(tool.outputSchema)
+                if tool.output_schema is not None:
+                    Draft202012Validator.check_schema(tool.output_schema)
             except Exception as exc:
                 raise ProviderMessageError(
                     f"Invalid JSON Schema for tool '{tool.name}': {exc}"
@@ -258,10 +258,10 @@ class Channel:
 
             compiled[tool.name] = CompiledTool(
                 definition=tool,
-                input_validator=Draft202012Validator(tool.inputSchema),
+                input_validator=Draft202012Validator(tool.input_schema),
                 output_validator=(
-                    Draft202012Validator(tool.outputSchema)
-                    if tool.outputSchema is not None
+                    Draft202012Validator(tool.output_schema)
+                    if tool.output_schema is not None
                     else None
                 ),
             )
@@ -565,14 +565,17 @@ class Channel:
             if pending is not None and pending.session is not None:
                 return pending.session
 
+        if self.settings.oauth_mode != "off" and self.metadata.get("auth_method") != "token":
+            return None
+
         return self._latest_session()
 
     async def _run_client_call(self, session: Any, method: str, params: dict[str, Any]) -> Any:
         if method == protocol.CREATE_MESSAGE:
             result = await session.create_message(**_sampling_kwargs(params))
         elif method == protocol.ELICIT:
-            result = await session.elicit(
-                message=params["message"], requestedSchema=params["requestedSchema"]
+            result = await session.elicit_form(
+                message=params["message"], requested_schema=params["requestedSchema"]
             )
         else:
             raise ProviderRequestError(f"Unsupported client call: {method!r}")
@@ -645,7 +648,7 @@ class Channel:
                 continue
 
             with contextlib.suppress(Exception):
-                await session.send_resource_updated(types.AnyUrl(uri))
+                await session.send_resource_updated(uri)
 
         if not subscribers and self._subscriptions.get(uri) is subscribers:
             del self._subscriptions[uri]
@@ -683,19 +686,19 @@ class Channel:
     def validate_output(
         self, tool: CompiledTool, result: types.CallToolResult
     ) -> types.CallToolResult:
-        if result.isError or tool.output_validator is None:
+        if result.is_error or tool.output_validator is None:
             return result
 
         name = tool.definition.name
 
-        if result.structuredContent is None:
+        if result.structured_content is None:
             return self.error_result(
                 f"Output validation error for '{name}': outputSchema is defined "
                 "but structuredContent is missing"
             )
 
         try:
-            tool.output_validator.validate(result.structuredContent)
+            tool.output_validator.validate(result.structured_content)
         except ValidationError as exc:
             return self.error_result(f"Output validation error for '{name}': {exc.message}")
 

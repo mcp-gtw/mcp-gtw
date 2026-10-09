@@ -69,7 +69,7 @@ sequenceDiagram
 A single low-level MCP `Server` and a single `StreamableHTTPSessionManager` serve **every** channel.
 The channel is resolved per request from the `Authorization: Bearer <token>` header:
 
-- The `mcp_asgi` wrapper in [`gateway.py`](../src/mcp_gtw/gateway.py) authenticates the token,
+- The `mcp_asgi` wrapper in [`gateway.py`](../src/mcpgtw/gateway.py) authenticates the token,
   resolves the channel and stashes its id on the ASGI scope.
 - The `list_tools` / `call_tool` handlers read that id back with `channel_for_scope` and act on the
   right channel.
@@ -105,3 +105,7 @@ server that owns the state. The gateway itself stays domain agnostic either way.
 - [Gateway library](gateway-library.md) — the `Gateway` class and how to extend it.
 - [Provider SDK](provider-sdk.md) — writing the JavaScript side.
 - [Security](security.md) — the trust boundaries drawn above.
+
+## OAuth client authorization
+
+Public MCP OAuth is opt-in and requires explicit channel grants. Provider WebSocket credentials remain separate. See [OAuth configuration, extension contracts, transport gates and deployment limits](oauth.md). The embedded authorization server is blocked at startup and remains unimplemented.

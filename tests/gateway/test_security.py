@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import json
 
-import httpx
+import httpx2 as httpx
 from fastapi import FastAPI
-from httpx import ASGITransport
+from httpx2 import ASGITransport
 from support import FakeProviderWebSocket
 
-from mcp_gtw.config import GatewaySettings
-from mcp_gtw.gateway import Gateway
+from mcpgtw.config import GatewaySettings
+from mcpgtw.gateway import Gateway
 
 
 def _client(app: FastAPI) -> httpx.AsyncClient:

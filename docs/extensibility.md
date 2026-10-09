@@ -12,14 +12,16 @@ Two ways to swap, both first class:
   yourself.
 
 ```python
-from mcp_gtw.gateway import Gateway
-from mcp_gtw.tokens import SecretsTokenProvider
+from mcpgtw.gateway import Gateway
+from mcpgtw.tokens import SecretsTokenProvider
+
 
 class MyGateway(Gateway):
-    token_provider_class = MyTokenProvider        # swap by class
+    token_provider_class = MyTokenProvider  # swap by class
+
 
 gateway = MyGateway()
-gateway = Gateway(tokens=MyTokenProvider())       # or swap by instance
+gateway = Gateway(tokens=MyTokenProvider())  # or swap by instance
 ```
 
 ## The strategies
@@ -118,10 +120,10 @@ that lets an authenticator honour a client-supplied token or a derived one:
 
 ```python
 channel = await gateway.create_channel(
-    channel_id="stable-id",        # optional, defaults to a random id
-    provider_token="…",            # optional, defaults to a fresh unique token
-    mcp_token="…",                 # optional, defaults to a fresh unique token
-    ttl_seconds=float("inf"),      # optional, defaults to offline_ttl_seconds
+    channel_id="stable-id",  # optional, defaults to a random id
+    provider_token="…",  # optional, defaults to a fresh unique token
+    mcp_token="…",  # optional, defaults to a fresh unique token
+    ttl_seconds=float("inf"),  # optional, defaults to offline_ttl_seconds
     metadata={"user": "alice"},
 )
 ```
@@ -149,3 +151,7 @@ so a naive extension cannot introduce a race or bypass a limit it never touched:
 You *can* override any of this — nothing is sealed — but you never inherit it by accident, and you
 never lose it by swapping an unrelated strategy. See [security.md](security.md) for the trust
 boundaries these invariants protect.
+
+## OAuth client authorization
+
+Public MCP OAuth is opt-in and requires explicit channel grants. Provider WebSocket credentials remain separate. See [OAuth configuration, extension contracts, transport gates and deployment limits](oauth.md). The embedded authorization server is blocked at startup and remains unimplemented.
