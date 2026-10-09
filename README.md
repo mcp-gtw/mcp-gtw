@@ -14,7 +14,7 @@
 <p align="center">
     <a href="https://github.com/mcp-gtw/mcp-gtw/actions/workflows/ci.yml"><img src="https://github.com/mcp-gtw/mcp-gtw/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
     <a href="https://pypi.org/project/mcp-gtw/"><img src="https://img.shields.io/pypi/v/mcp-gtw.svg" alt="PyPI"></a>
-    <a href="https://pypi.org/project/mcp-gtw/"><img src="https://img.shields.io/pypi/pyversions/mcp-gtw.svg" alt="Python"></a>
+    <a href="pyproject.toml"><img src="https://img.shields.io/badge/python-3.12%20%7C%203.13%20%7C%203.14-blue.svg" alt="Python: 3.12, 3.13, 3.14"></a>
     <a href="LICENSE.md"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
 </p>
 
