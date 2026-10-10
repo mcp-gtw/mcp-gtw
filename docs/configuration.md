@@ -91,6 +91,7 @@ Lists are comma separated. OAuth requires an application-provided channel access
 | `GATEWAY_OAUTH_RESOURCE_URL` | `` |
 | `GATEWAY_OAUTH_AUTHORIZATION_SERVERS` | `` |
 | `GATEWAY_OAUTH_REQUIRED_SCOPES` | `mcp:access` |
+| `GATEWAY_OAUTH_SUPPORTED_SCOPES` | Empty derives the required scopes; include additional tool scopes here |
 | `GATEWAY_OAUTH_ALLOW_STATIC_MCP_TOKENS` | `false` |
 | `GATEWAY_OAUTH_ALLOW_LOCALHOST_HTTP` | `false` |
 | `GATEWAY_OAUTH_TOKEN_VERIFIER` | `jwt` |
@@ -108,3 +109,39 @@ Lists are comma separated. OAuth requires an application-provided channel access
 | `GATEWAY_OAUTH_RATE_LIMIT_WINDOW_SECONDS` | `1.0` |
 | `GATEWAY_OAUTH_RATE_LIMIT_MAXIMUM_KEYS` | `10000` |
 | `GATEWAY_OAUTH_MAXIMUM_SESSIONS` | `10000` |
+
+| Embedded setting | Default |
+| --- | --- |
+| `GATEWAY_OAUTH_EMBEDDED_ISSUER` | First configured authorization server when embedded; otherwise empty |
+| `GATEWAY_OAUTH_EMBEDDED_CIMD_ENABLED` | `true` |
+| `GATEWAY_OAUTH_EMBEDDED_CIMD_ALLOWED_ORIGINS` | Empty permits public HTTPS origins; optional exact CSV origin allowlist |
+| `GATEWAY_OAUTH_EMBEDDED_DCR_ENABLED` | `false` |
+| `GATEWAY_OAUTH_EMBEDDED_AUTH_CODE_TTL_SECONDS` | `120` (maximum 300) |
+| `GATEWAY_OAUTH_EMBEDDED_ACCESS_TOKEN_TTL_SECONDS` | `900` |
+| `GATEWAY_OAUTH_EMBEDDED_REFRESH_TOKEN_TTL_SECONDS` | `2592000` |
+
+Embedded lifetimes are finite positive integers and access lifetime cannot exceed refresh lifetime. The issuer must be a root origin and match the sole authorization server; JWKS must be `<issuer>/oauth/jwks`. Inject a complete authorization server and explicit channel policy; see [OAuth](oauth.md).
+
+### OAuth request budgets
+
+All limits are finite, positive and process-local. HTTP 429 responses include `Retry-After` and
+`Cache-Control: no-store`. Verified OAuth requests consume separate IP, client and principal budgets.
+Unverified values never create principals. Login attempts additionally consume a username digest
+budget, preventing an attacker from bypassing the account budget by changing IP addresses.
+
+| Environment variable | Default | Meaning |
+|---|---|---|
+| `GATEWAY_OAUTH_RATE_LIMIT_BACKOFF_SECONDS` | `1` | Initial backoff after budget exhaustion |
+| `GATEWAY_OAUTH_RATE_LIMIT_MAXIMUM_BACKOFF_SECONDS` | `30` | Maximum progressive backoff, at least the initial delay |
+| `GATEWAY_OAUTH_EMBEDDED_RATE_LIMIT_WINDOW_SECONDS` | `60` | Embedded endpoint and identity budget window |
+| `GATEWAY_OAUTH_EMBEDDED_BROWSER_REQUESTS` | `30` | Browser actions per trusted client address |
+| `GATEWAY_OAUTH_EMBEDDED_TOKEN_REQUESTS` | `120` | Token and revocation requests per address |
+| `GATEWAY_OAUTH_EMBEDDED_REGISTRATION_REQUESTS` | `10` | DCR requests per address |
+| `GATEWAY_OAUTH_EMBEDDED_METADATA_REQUESTS` | `120` | AS discovery and JWKS requests per address |
+| `GATEWAY_OAUTH_EMBEDDED_CIMD_REQUESTS` | `10` | Outbound uncached CIMD lookups |
+| `GATEWAY_OAUTH_EMBEDDED_CLIENT_REQUESTS` | `120` | Requests per OAuth client ID |
+| `GATEWAY_OAUTH_EMBEDDED_PRINCIPAL_REQUESTS` | `120` | Consent and exchange requests per verified subject |
+| `GATEWAY_OAUTH_EMBEDDED_LOGIN_ATTEMPTS` | `10` | Password attempts per normalized username digest |
+
+Every budget is capped by `GATEWAY_OAUTH_RATE_LIMIT_MAXIMUM_KEYS`. Exhausting the key capacity
+rejects new keys until expiry. The expiry queue retains at most one entry per tracked key.

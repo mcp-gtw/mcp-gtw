@@ -1,0 +1,101 @@
+name: coordinated OAuth acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      gateway_sha:
+        description: Complete gateway commit SHA
+        required: true
+        type: string
+      game_sha:
+        description: Complete demo-game commit SHA
+        required: true
+        type: string
+      provider_sha:
+        description: Complete provider SDK commit SHA
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+      TEST_INSPECTOR_VERSION: "2.10.1"
+    steps:
+      - name: Validate immutable inputs
+        env:
+          GATEWAY_SHA: ${{ inputs.gateway_sha }}
+          GAME_SHA: ${{ inputs.game_sha }}
+          PROVIDER_SHA: ${{ inputs.provider_sha }}
+        run: |
+          for sha in "$GATEWAY_SHA" "$GAME_SHA" "$PROVIDER_SHA"; do
+            [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          done
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: mcp-gtw/mcp-gtw
+          ref: ${{ inputs.gateway_sha }}
+          path: mcp-gtw
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: mcp-gtw/demo-game
+          ref: ${{ inputs.game_sha }}
+          path: mcp-gtw-demo-game
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: mcp-gtw/mcp-gtw-provider
+          ref: ${{ inputs.provider_sha }}
+          path: mcp-gtw-provider
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "24.21.0"
+      - name: Install pinned toolchains
+        run: |
+          pip install uv==0.13.0
+          npm install -g npm@12.2.0
+      - name: Record exact checkout revisions
+        run: |
+          for repo in mcp-gtw mcp-gtw-demo-game mcp-gtw-provider; do
+            git -C "$repo" rev-parse HEAD
+          done
+      - name: Gateway gates and build
+        working-directory: mcp-gtw
+        run: |
+          make install lint coverage build
+      - name: Game gates and build
+        working-directory: mcp-gtw-demo-game
+        run: |
+          make install lint coverage
+          uv build
+      - name: Provider gates and package
+        working-directory: mcp-gtw-provider
+        run: |
+          make install lint coverage
+          npm pack --dry-run
+      - name: Install Chrome
+        working-directory: mcp-gtw-demo-game
+        run: npx --prefix client playwright install --with-deps chromium
+      - name: Real SDK provider and bounded load smoke
+        working-directory: mcp-gtw
+        run: make sdk-smoke oauth-benchmark
+      - name: Real browser and host flows
+        working-directory: mcp-gtw-demo-game
+        run: make oauth-smoke embedded-smoke
+      - name: Build production images
+        run: |
+          docker build -t mcp-gtw:oauth mcp-gtw
+          make -C mcp-gtw-demo-game docker-build IMAGE=mcp-gtw-game:oauth
+      - name: HTTPS proxy and installed artifact smoke
+        working-directory: mcp-gtw-demo-game
+        run: make proxy-smoke

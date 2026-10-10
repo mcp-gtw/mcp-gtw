@@ -1,12 +1,30 @@
 from __future__ import annotations
 
 import time
+from abc import ABC, abstractmethod
 from dataclasses import replace
 
 from mcpgtw.oauth.access_context import McpAccessContext
 
 
-class McpSessionBindingStore:
+class McpSessionBindingStore(ABC):
+    @abstractmethod
+    def bind(self, session_id: str, context: McpAccessContext) -> bool: ...
+
+    @abstractmethod
+    def accepts(self, session_id: str, context: McpAccessContext) -> bool: ...
+
+    @abstractmethod
+    def remove(self, session_id: str) -> None: ...
+
+    @abstractmethod
+    def remove_channel(self, channel_id: str) -> None: ...
+
+    @abstractmethod
+    def clear(self) -> None: ...
+
+
+class MemoryMcpSessionBindingStore(McpSessionBindingStore):
     """Process-local bindings for a process-local MCP session manager."""
 
     def __init__(self, maximum_sessions: int = 10000, idle_seconds: float = 900) -> None:

@@ -66,7 +66,7 @@ class JwtAccessTokenVerifier(AccessTokenVerifier):
                 or header.get("typ") not in ("at+jwt", "application/at+jwt")
                 or "jku" in header
                 or "x5u" in header
-                or header.get("crit")
+                or "crit" in header
             ):
                 return None
 

@@ -68,6 +68,45 @@ make format        # apply formatting and safe fixes
 
 ## OAuth client authorization
 
-Public MCP OAuth is opt-in and requires explicit channel grants. Provider WebSocket credentials remain separate. See [OAuth configuration, extension contracts, transport gates and deployment limits](oauth.md). The embedded authorization server is blocked at startup and remains unimplemented.
+Public MCP OAuth is opt-in and requires explicit channel grants. Provider WebSocket credentials remain separate. See [OAuth configuration, extension contracts, transport gates and deployment limits](oauth.md). Embedded OAuth requires an injected durable authorization server; the demo game supplies local account login and consent.
+
+The embedded suite also runs a fixed-seed malformed-input fuzz corpus: 256 credentials and 768 token/registration/authorization requests must fail closed without reaching identity or consent. Endpoint budgets are raised only inside that test so parsing failures are exercised rather than hidden behind rate limiting.
 
 `make sdk-smoke` runs real JavaScript providers against OAuth and static MCP clients on loopback. Requirements and test-only boundaries: [tests/e2e/README.md](../tests/e2e/README.md).
+
+The OAuth security cases are traceable to these suites:
+
+| Plan cases | Automated coverage |
+| --- | --- |
+| SEC-01/02/03/19/20 | `test_resource_server.py`: signatures, claims, ID-token rejection, bounded downloads, trusted JWKS rollover and introspection failure |
+| SEC-04/05/06 | `test_resource_server.py`, `gateway/test_security.py`: explicit grants, wrong owners/providers and session identity swapping |
+| SEC-07/22/23 | `test_resource_server.py`: request/chunk revocation, deletion and four official-client JSON/SSE/stateful/stateless combinations |
+| SEC-08/09/10/11/12 | `test_embedded.py`: exact callbacks, CSRF, PKCE/resource/scope bindings, concurrent one-use codes and refresh-family reuse |
+| SEC-13/14 | `test_client_metadata.py`: non-public/mapped IPs, DNS pinning and actual peer, blocked redirects, malformed/oversized metadata and bounded cache |
+| SEC-15/16 | `test_embedded.py`, `test_client_metadata.py`: registration quotas, finite stores and endpoint request budgets |
+| SEC-17/18/27 | `test_resource_server.py`, `test_embedded.py`: ambiguous credentials/cookies/fields, canonical URLs and neutral challenges |
+| SEC-21 | `test_resource_server.py`, `gateway/test_gateway.py`: log query redaction and version/admin exposure |
+| SEC-24/25 | `gateway/test_extensibility.py`, `gateway/test_channel.py`, `test_resource_server.py`: strategy injection, token regression and correlated reverse calls |
+| SEC-26/28 | `test_embedded.py` and demo `tests/e2e/proxy.py`: cookie/consent protections and real Docker/nginx HTTPS discovery |
+| HOST-08 | `test_resource_server.py`: serialized tool securitySchemes, missing-scope challenge, no provider execution and successful reauthorization |
+
+The demo's `make embedded-smoke` uses the actual embedded AS and durable accounts in Chrome; `make oauth-smoke` exercises an external test IdP. Both use the official MCP client. Browser and proxy scripts are opt-in local integrations, not evidence of a remote ChatGPT/Claude connection. Real host account/workspace checks require a separately authorized accessible endpoint and are not covered by line/branch coverage. GitHub CI runs only after the maintainer pushes the coordinated branches.
+
+## Coordinated immutable integration
+
+`.github/workflows/oauth-integration.yml` accepts three required full commit SHAs and checks out the
+matching gateway, game and JavaScript provider. It runs Python 3.12/3.13/3.14 gates, the frontend/SDK
+gates, real Chrome external/embedded login, official MCP clients, Inspector, 1000-channel bounded
+load and production Docker/nginx HTTPS smoke. No release or publish step is present. Action SHAs,
+uv, npm, Node and Inspector are pinned. Record the three commits shown by the workflow.
+
+The demo unit workflow requires the repository variable `GATEWAY_INTEGRATION_SHA` containing the
+complete tested gateway commit. Set it after committing the coordinated feature. Branch names and
+implicit main-branch fallbacks are not used. Local changes are currently uncommitted at the user's
+request, so local worktree tests cannot be described as a run of those future GitHub commits.
+
+Registry checks cover all direct/dev/build and locked transitive packages. Babel 7 is constrained by
+magicast, es-module-lexer 2 and obug 2 by Vitest, nanoid 3 by postcss, mdn-data 2.27.1 by css-tree, and
+why-is-node-running 3.2.1 is pinned by Vitest. Their parents are current stable releases. Do not force
+unsupported transitive majors through npm overrides. Compatible upgrades are resolved into locks.
+Temporary registry/audit results are kept outside the repositories per the maintainer's preference.

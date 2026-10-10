@@ -1,3 +1,4 @@
+import argparse
 import asyncio
 import json
 import os
@@ -59,20 +60,32 @@ async def verify(config):
                     "crossChannelDenied": True,
                     "internalTokenDenied": True,
                     "sourceUnchanged": True,
+                    "installedArtifact": config["installed_artifact"],
                 }
             )
         )
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--provider-module", type=Path)
+    args = parser.parse_args()
+
     with socket.socket() as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind(("127.0.0.1", 19480))
 
     root = Path(__file__).resolve().parents[2]
     fixture = Path(__file__).parent
 
     with tempfile.TemporaryDirectory() as temp:
-        config = {"access": secrets.token_urlsafe(32), "channels": ["static", "oauth"]}
+        module = args.provider_module or root.parent / "mcp-gtw-provider/src/index.js"
+        config = {
+            "access": secrets.token_urlsafe(32),
+            "channels": ["static", "oauth"],
+            "provider_module": module.resolve().as_uri(),
+            "installed_artifact": args.provider_module is not None,
+        }
 
         for name in config["channels"]:
             config[name] = {"mcp": secrets.token_urlsafe(32), "provider": secrets.token_urlsafe(32)}

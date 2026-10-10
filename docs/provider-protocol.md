@@ -226,3 +226,7 @@ The gateway replies with `pong`.
   resubscribing.
 - At most `GATEWAY_MAXIMUM_PENDING_CALLS_PER_CHANNEL` requests may be in flight at once; a request
   that is not answered within `GATEWAY_TOOL_CALL_TIMEOUT_SECONDS` fails and a `cancel` is sent.
+
+Tool inputSchema/outputSchema must be self-contained. JSON Schema $defs, local references and
+references to the root $id are supported. External $ref/$dynamicRef documents are never downloaded
+or loaded from files. Unavailable references produce a tool validation error.

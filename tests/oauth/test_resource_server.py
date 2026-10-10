@@ -25,7 +25,8 @@ from mcpgtw.oauth.credentials import bearer_credential
 from mcpgtw.oauth.http_fetch import bounded_json
 from mcpgtw.oauth.introspection_verifier import IntrospectionAccessTokenVerifier
 from mcpgtw.oauth.jwt_verifier import JwtAccessTokenVerifier
-from mcpgtw.oauth.session_binding import McpSessionBindingStore
+from mcpgtw.oauth.session_binding import MemoryMcpSessionBindingStore
+from mcpgtw.oauth.sqlite_grants import SqliteChannelGrantStore
 from mcpgtw.oauth.verified_principal import VerifiedPrincipal
 
 RESOURCE = "https://game.example/mcp"
@@ -200,6 +201,12 @@ def test_case_insensitive_bearer():
         {"iss": "wrong"},
         {"aud": "wrong"},
         {"aud": None},
+        {"aud": [RESOURCE, 42]},
+        {"aud": [RESOURCE, ""]},
+        {"azp": "another-client"},
+        {"scope": "mcp:access\nadmin"},
+        {"scope": "mcp:access café"},
+        {"scope": 'mcp:access "admin'},
         {"exp": True},
         {"exp": 0},
         {"sub": None},
@@ -249,7 +256,7 @@ async def test_grants_capacity_revocation_and_ambiguous_channel():
 
 def test_sec06_session_binding(monkeypatch):
     context = McpAccessContext("c", "oauth", "alice", "host", frozenset(), ISSUER, 200)
-    store = McpSessionBindingStore(1, 10)
+    store = MemoryMcpSessionBindingStore(1, 10)
     assert not store.accepts("unknown", context)
     assert store.bind("one", context)
     assert store.bind("one", context)
@@ -269,10 +276,10 @@ def test_sec06_session_binding(monkeypatch):
     store.clear()
 
     with pytest.raises(ValueError):
-        McpSessionBindingStore(0)
+        MemoryMcpSessionBindingStore(0)
 
     with pytest.raises(ValueError):
-        McpSessionBindingStore(idle_seconds=0)
+        MemoryMcpSessionBindingStore(idle_seconds=0)
 
 
 async def test_sec04_discovery_hybrid_and_authorization():
@@ -355,8 +362,14 @@ def test_missing_dependencies_and_embedded_blocked():
     with pytest.raises(GatewayConfigurationError, match="injected"):
         Gateway(settings(), channel_access=DenyUnlessGranted(MemoryChannelGrantStore()))
 
-    with pytest.raises(GatewayConfigurationError, match="blocked"):
-        Gateway(settings(oauth_mode="embedded"))
+    with pytest.raises(GatewayConfigurationError, match="injected authorization"):
+        Gateway(
+            settings(
+                oauth_mode="embedded",
+                oauth_token_verifier="jwt",
+                oauth_jwks_url="https://auth.example/oauth/jwks",
+            )
+        )
 
     with pytest.raises(GatewayConfigurationError, match="eligibility"):
         Gateway(
@@ -456,6 +469,7 @@ async def test_sec01_jwt_signatures_rollover_and_header_attacks(monkeypatch):
         assert await verifier.verify(token(jku="http://localhost"), RESOURCE) is None
         assert await verifier.verify(token(x5u="http://localhost"), RESOURCE) is None
         assert await verifier.verify(token(crit=["unexpected"]), RESOURCE) is None
+        assert await verifier.verify(token(crit=[]), RESOURCE) is None
         assert await verifier.verify("invalid", RESOURCE) is None
         nested = b'{"a":' + b"[" * 1100 + b"0" + b"]" * 1100 + b"}"
         nested_token = jwt.utils.base64url_encode(nested).decode() + ".e30.c2ln"
@@ -638,10 +652,13 @@ async def test_guard_identity_changed_and_invalid_session_cleanup():
 
 
 @pytest.mark.parametrize("stateless", [False, True])
-async def test_oauth_official_mcp_client_round_trip(stateless):
+@pytest.mark.parametrize("json_response", [False, True])
+async def test_oauth_official_mcp_client_round_trip(stateless, json_response):
     from mcp.client.session import ClientSession
     from mcp.client.streamable_http import streamable_http_client
     from support import FakeWebSocket
+
+    from mcpgtw.oauth.tool_access import RequiredScopesToolAccess
 
     class AnsweringProvider(FakeWebSocket):
         async def send_json(self, message):
@@ -661,7 +678,7 @@ async def test_oauth_official_mcp_client_round_trip(stateless):
     verifier.verify.return_value = principal()
     grants = MemoryChannelGrantStore()
     gateway = Gateway(
-        settings(mcp_stateless=stateless, mcp_json_response=True),
+        settings(mcp_stateless=stateless, mcp_json_response=json_response),
         access_token_verifier=verifier,
         channel_access=DenyUnlessGranted(grants),
     )
@@ -685,14 +702,30 @@ async def test_oauth_official_mcp_client_round_trip(stateless):
             ClientSession(read, write) as session,
         ):
             await session.initialize()
-            assert (await session.list_tools()).tools[0].name == "hello"
+            tools = (await session.list_tools()).tools
+            assert tools[0].name == "hello"
+            assert tools[0].meta["securitySchemes"] == [
+                {"type": "oauth2", "scopes": ["mcp:access"]}
+            ]
+            gateway.tool_access_policy = RequiredScopesToolAccess(
+                frozenset({"mcp:access", "game:write"})
+            )
+            denied = await session.call_tool("hello", {})
+            assert denied.is_error
+            assert 'error="insufficient_scope"' in denied.meta["mcp/www_authenticate"][0]
+            assert 'scope="game:write mcp:access"' in denied.meta["mcp/www_authenticate"][0]
+            assert not any(message.get("type") == "request" for message in provider.messages)
+            verifier.verify.return_value = replace(
+                principal(), scopes=frozenset({"mcp:access", "game:write"})
+            )
+            await grants.grant(verifier.verify.return_value, channel.channel_id)
             assert (await session.call_tool("hello", {})).content[0].text == "authorized"
 
 
 def test_rate_limit_capacity_expiry_and_config(monkeypatch):
-    from mcpgtw.oauth.rate_limit import OAuthRateLimitPolicy
+    from mcpgtw.oauth.rate_limit import WindowOAuthRateLimitPolicy
 
-    policy = OAuthRateLimitPolicy(1, 1, 1)
+    policy = WindowOAuthRateLimitPolicy(1, 1, 1)
     assert policy.admit("one")
     assert not policy.admit("one")
     assert not policy.admit("two")
@@ -701,16 +734,16 @@ def test_rate_limit_capacity_expiry_and_config(monkeypatch):
 
     for args in [(0,), (1, 0), (1, 1, 0)]:
         with pytest.raises(ValueError):
-            OAuthRateLimitPolicy(*args)
+            WindowOAuthRateLimitPolicy(*args)
 
 
 async def test_http_budget_and_injected_policy():
-    from mcpgtw.oauth.rate_limit import OAuthRateLimitPolicy
+    from mcpgtw.oauth.rate_limit import WindowOAuthRateLimitPolicy
 
     gateway = Gateway(
         settings(),
         mcp_access_controller=AsyncMock(side_effect=McpAccessError("invalid_token")),
-        oauth_rate_limit=OAuthRateLimitPolicy(1),
+        oauth_rate_limit=WindowOAuthRateLimitPolicy(1),
     )
     gateway.mcp_access_controller.authorize.side_effect = McpAccessError("invalid_token")
     app = gateway.create_app()
@@ -726,10 +759,10 @@ async def test_http_budget_and_injected_policy():
 
 @pytest.mark.parametrize("window", [float("inf"), float("nan")])
 def test_rate_limit_nonfinite_window(window):
-    from mcpgtw.oauth.rate_limit import OAuthRateLimitPolicy
+    from mcpgtw.oauth.rate_limit import WindowOAuthRateLimitPolicy
 
     with pytest.raises(ValueError):
-        OAuthRateLimitPolicy(window_seconds=window)
+        WindowOAuthRateLimitPolicy(window_seconds=window)
 
 
 def test_uvicorn_websocket_queries_are_redacted():
@@ -809,3 +842,354 @@ def test_invalid_configuration_does_not_render_client_secret():
         settings(oauth_introspection_client_secret=secret, oauth_required_scopes=["bad scope"])
 
     assert secret not in str(error.value)
+
+
+@pytest.mark.parametrize("injected", [False, True])
+async def test_tool_auth_metadata_and_revocation_after_admission(injected):
+    from types import SimpleNamespace
+
+    from mcp.types import CallToolRequestParams, PaginatedRequestParams
+    from support import FakeWebSocket
+
+    from mcpgtw.oauth.tool_access import RequiredScopesToolAccess
+
+    class ToolPolicy(RequiredScopesToolAccess):
+        def required_scopes(self, channel, tool_name):
+            return super().required_scopes(channel, tool_name) | {"game:write"}
+
+    class CustomGateway(Gateway):
+        tool_access_policy_class = ToolPolicy
+
+    policy = ToolPolicy(frozenset({"mcp:access"}))
+    gateway = CustomGateway(
+        settings(),
+        mcp_access_controller=AsyncMock(),
+        **({"tool_access_policy": policy} if injected else {}),
+    )
+    assert isinstance(gateway.tool_access_policy, ToolPolicy)
+
+    if injected:
+        assert gateway.tool_access_policy is policy
+    channel = await gateway.create_channel()
+    await channel.attach(FakeWebSocket(), provider_id="test", provider_name=None)
+    await channel.register("tools", [{"name": "hello", "inputSchema": {"type": "object"}}])
+    context = McpAccessContext(
+        channel.channel_id,
+        "oauth",
+        "alice",
+        "host",
+        frozenset({"mcp:access"}),
+        ISSUER,
+        int(time.time()) + 900,
+    )
+    scope = request().scope | {
+        "gateway_channel_id": channel.channel_id,
+        "gateway_access_context": context,
+    }
+    ctx = SimpleNamespace(request=Request(scope), session=AsyncMock(), meta=None)
+    listed = await gateway.server._request_handlers["tools/list"].handler(
+        ctx, PaginatedRequestParams()
+    )
+    assert listed.model_dump(by_alias=True)["tools"][0]["securitySchemes"] == [
+        {"type": "oauth2", "scopes": ["game:write", "mcp:access"]}
+    ]
+    assert channel.list_tools()[0].meta is None
+    gateway.mcp_access_controller.authorize.side_effect = McpAccessError("invalid_token")
+    result = await gateway.server._request_handlers["tools/call"].handler(
+        ctx, CallToolRequestParams(name="hello", arguments={})
+    )
+    assert result.is_error
+    assert 'error="invalid_token"' in result.meta["mcp/www_authenticate"][0]
+    assert "error_description=" in result.meta["mcp/www_authenticate"][0]
+    publisher = gateway.oauth_metadata
+    publisher.rate_limit.requests = 1
+    assert (await publisher.metadata(request())).status_code == 200
+    assert (await publisher.metadata(request())).status_code == 429
+
+
+async def test_revoked_credential_keeps_http_challenge_before_response_start():
+    from mcpgtw.oauth.access_decision import AuthorizedMcpRequest
+
+    controller = AsyncMock()
+    gateway = Gateway(settings(mcp_stateless=True), mcp_access_controller=controller)
+    channel = await gateway.create_channel()
+    access = McpAccessContext(
+        channel.channel_id,
+        "oauth",
+        "alice",
+        "host",
+        frozenset({"mcp:access"}),
+        ISSUER,
+        int(time.time()) + 900,
+    )
+    controller.authorize.side_effect = [
+        AuthorizedMcpRequest(channel, access),
+        McpAccessError("invalid_token"),
+    ]
+
+    async def manager(scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+
+    gateway.manager.handle_request = manager
+    sent = AsyncMock()
+    await gateway.mcp_asgi(request().scope, AsyncMock(), sent)
+    response = sent.await_args_list[0].args[0]
+    assert response["status"] == 401
+    headers = dict(response["headers"])
+    assert b'resource_metadata="https://game.example/.well-known/' in headers[b"www-authenticate"]
+    assert b'error="invalid_token"' in headers[b"www-authenticate"]
+    assert headers[b"cache-control"] == b"no-store"
+
+
+@pytest.mark.parametrize("changed", ["channel", "principal"])
+async def test_sec22_tool_reauthorization_cannot_change_its_channel_or_owner(changed, monkeypatch):
+    from types import SimpleNamespace
+
+    from mcp.types import CallToolRequestParams
+
+    from mcpgtw.oauth.access_decision import AuthorizedMcpRequest
+
+    controller = AsyncMock()
+    gateway = Gateway(settings(), mcp_access_controller=controller)
+    channel = await gateway.create_channel()
+    other = await gateway.create_channel()
+    access = McpAccessContext(
+        channel.channel_id, "oauth", "alice", "host", frozenset({"mcp:access"}), ISSUER, None
+    )
+    current_channel = other if changed == "channel" else channel
+    current = replace(
+        access,
+        channel_id=current_channel.channel_id,
+        principal_id="bob" if changed == "principal" else access.principal_id,
+    )
+    controller.authorize.return_value = AuthorizedMcpRequest(current_channel, current)
+    dispatch = AsyncMock()
+    monkeypatch.setattr(type(channel), "execute_tool", dispatch)
+    scope = request().scope | {
+        "gateway_channel_id": channel.channel_id,
+        "gateway_access_context": access,
+    }
+    ctx = SimpleNamespace(request=Request(scope), session=AsyncMock(), meta=None)
+    result = await gateway.server._request_handlers["tools/call"].handler(
+        ctx, CallToolRequestParams(name="hello", arguments={})
+    )
+    assert result.is_error
+    assert 'error="invalid_token"' in result.meta["mcp/www_authenticate"][0]
+    dispatch.assert_not_called()
+
+
+async def test_sec22_stream_reauthorization_cannot_switch_to_a_new_granted_channel():
+    from mcpgtw.oauth.access_decision import AuthorizedMcpRequest
+
+    controller = AsyncMock()
+    gateway = Gateway(settings(mcp_stateless=True), mcp_access_controller=controller)
+    channel = await gateway.create_channel()
+    other = await gateway.create_channel()
+    access = McpAccessContext(
+        channel.channel_id, "oauth", "alice", "host", frozenset({"mcp:access"}), ISSUER, None
+    )
+    controller.authorize.side_effect = [
+        AuthorizedMcpRequest(channel, access),
+        AuthorizedMcpRequest(other, replace(access, channel_id=other.channel_id)),
+    ]
+
+    async def manager(scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+
+    gateway.manager.handle_request = manager
+    sent = AsyncMock()
+    await gateway.mcp_asgi(request().scope, AsyncMock(), sent)
+    assert sent.await_args_list[0].args[0]["status"] == 404
+
+
+@pytest.mark.parametrize("durable", [False, True])
+async def test_sec04_grants_scope_reduction_reconsent_and_client_isolation(tmp_path, durable):
+    store = (
+        SqliteChannelGrantStore(str(tmp_path / "grants.db"))
+        if durable
+        else MemoryChannelGrantStore()
+    )
+    owner = principal()
+    broader = replace(owner, scopes=owner.scopes | {"game:write"})
+    reader = replace(owner, client_id="reader")
+    policy = DenyUnlessGranted(store)
+    await store.grant(owner, "game")
+    assert await policy.resolve(owner, "game") == "game"
+    assert await policy.resolve(broader, "game") is None
+    assert await policy.resolve(reader, "game") is None
+    await store.grant(broader, "game")
+    await store.grant(reader, "game")
+    assert await policy.resolve(broader, "game") == "game"
+    assert await policy.resolve(replace(reader, scopes=broader.scopes), "game") is None
+    await store.grant(owner, "game")
+    assert await policy.resolve(broader, "game") is None
+    assert await policy.resolve(replace(owner, scopes=frozenset()), "game") == "game"
+
+    if durable:
+        restarted = SqliteChannelGrantStore(store.path)
+        assert await restarted.channels(broader) == frozenset()
+        assert await restarted.channels(reader) == frozenset({"game"})
+
+
+@pytest.mark.parametrize("method", ["GET", "POST", "DELETE"])
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"channel_id": "another-channel"},
+        {"principal_id": "another-user"},
+        {"client_id": "another-client"},
+        {"issuer": "https://another-issuer.example"},
+        {"credential_kind": "token"},
+    ],
+)
+async def test_sec06_stolen_session_all_identity_fields_denied_before_manager(method, changes):
+    from mcpgtw.oauth.access_decision import AuthorizedMcpRequest
+
+    controller = AsyncMock()
+    gateway = Gateway(settings(mcp_stateless=False), mcp_access_controller=controller)
+    channel = await gateway.create_channel()
+    original = McpAccessContext(
+        channel.channel_id, "oauth", "alice", "host", frozenset({"mcp:access"}), ISSUER, None
+    )
+    gateway.session_bindings.bind("stolen", original)
+    controller.authorize.return_value = AuthorizedMcpRequest(channel, replace(original, **changes))
+    gateway.manager.handle_request = AsyncMock()
+    async with httpx2.AsyncClient(
+        transport=httpx2.ASGITransport(gateway.create_app()), base_url=RESOURCE
+    ) as client:
+        response = await client.request(method, RESOURCE, headers={"Mcp-Session-Id": "stolen"})
+
+    assert response.status_code == 404
+    gateway.manager.handle_request.assert_not_awaited()
+    assert not channel._pending
+
+
+@pytest.mark.parametrize("exhausted", ["client", "principal"])
+async def test_sec16_verified_client_principal_limits_block_before_manager(exhausted):
+    from mcpgtw.oauth.access_decision import AuthorizedMcpRequest
+    from mcpgtw.oauth.rate_limit import WindowOAuthRateLimitPolicy
+
+    controller = AsyncMock()
+    budget = WindowOAuthRateLimitPolicy(1, 60)
+    gateway = Gateway(settings(), mcp_access_controller=controller, oauth_rate_limit=budget)
+    channel = await gateway.create_channel()
+    context = McpAccessContext(
+        channel.channel_id, "oauth", "alice", "host", frozenset(), ISSUER, None
+    )
+    controller.authorize.return_value = AuthorizedMcpRequest(channel, context)
+    key = "client:" + ISSUER + "\0host" if exhausted == "client" else "principal:alice"
+    assert budget.admit(key)
+    gateway.manager.handle_request = AsyncMock()
+    async with httpx2.AsyncClient(
+        transport=httpx2.ASGITransport(gateway.create_app()), base_url=RESOURCE
+    ) as client:
+        response = await client.post(RESOURCE)
+
+    assert response.status_code == 429
+    assert int(response.headers["retry-after"]) >= 1
+    gateway.manager.handle_request.assert_not_awaited()
+
+
+async def test_sec18_prefixed_public_resource_mount_metadata_and_admin_collision():
+    resource = "https://game.example/public/mcp"
+    verifier = AsyncMock()
+    verifier.verify.return_value = principal()
+    grants = MemoryChannelGrantStore()
+    config = settings(oauth_resource_url=resource)
+    gateway = Gateway(
+        config, access_token_verifier=verifier, channel_access=DenyUnlessGranted(grants)
+    )
+    channel = await gateway.create_channel()
+    await grants.grant(principal(), channel.channel_id)
+
+    async def handle(scope, receive, send):
+        assert scope["root_path"] == "/public/mcp"
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"authorized"})
+
+    gateway.manager.handle_request = AsyncMock(side_effect=handle)
+    async with httpx2.AsyncClient(transport=httpx2.ASGITransport(gateway.create_app())) as client:
+        response = await client.post(resource)
+        assert response.status_code == 401
+        assert (
+            "/.well-known/oauth-protected-resource/public/mcp"
+            in response.headers["www-authenticate"]
+        )
+        metadata = await client.get(
+            "https://game.example/.well-known/oauth-protected-resource/public/mcp"
+        )
+        assert metadata.json()["resource"] == resource
+        assert (
+            await client.post(resource, headers={"Authorization": "Bearer valid"})
+        ).content == b"authorized"
+        assert (
+            await client.post(
+                resource + "/" + channel.channel_id, headers={"Authorization": "Bearer valid"}
+            )
+        ).status_code == 200
+        assert (await client.post("https://game.example/mcp")).status_code == 404
+
+    for path in ["/public/mcp", "/public/mcp/stats"]:
+        with pytest.raises(GatewayConfigurationError):
+            Gateway(
+                settings(
+                    oauth_resource_url=resource,
+                    admin_enabled=True,
+                    admin_key="secret",
+                    admin_path=path,
+                ),
+                access_token_verifier=verifier,
+                channel_access=DenyUnlessGranted(grants),
+            )
+
+
+async def test_memory_grant_deadlines_cannot_be_renewed_by_tokens_and_release_capacity(monkeypatch):
+    now = time.time()
+    monkeypatch.setattr("mcpgtw.oauth.channel_grants.time.time", lambda: now)
+    store = MemoryChannelGrantStore(1)
+    owner = replace(principal(), expires_at=int(now) + 10)
+    renewed = replace(owner, expires_at=int(now) + 1000)
+    await store.grant(owner, "old")
+    assert await store.channels(renewed) == frozenset({"old"})
+    now += 11
+    assert not await store.channels(renewed)
+    await store.grant(renewed, "new")
+    assert await store.channels(renewed) == frozenset({"new"})
+    assert store._count == 1
+    assert "old" not in store._grants[owner.principal_id]
+
+
+def test_session_binding_strategy_class_and_instance_injection():
+    class CustomBindings(MemoryMcpSessionBindingStore):
+        pass
+
+    class CustomGateway(Gateway):
+        session_binding_store_class = CustomBindings
+
+    assert isinstance(CustomGateway().session_bindings, CustomBindings)
+    bindings = CustomBindings()
+    assert Gateway(session_bindings=bindings).session_bindings is bindings
+
+
+def test_metadata_and_rate_strategy_class_and_instance_injection():
+    from mcpgtw.oauth.rate_limit import WindowOAuthRateLimitPolicy
+    from mcpgtw.oauth.resource_metadata import ProtectedResourceMetadataPublisher
+
+    class CustomMetadata(ProtectedResourceMetadataPublisher):
+        pass
+
+    class CustomRateLimit(WindowOAuthRateLimitPolicy):
+        pass
+
+    class CustomGateway(Gateway):
+        oauth_metadata_class = CustomMetadata
+        oauth_rate_limit_class = CustomRateLimit
+
+    gateway = CustomGateway(settings(), mcp_access_controller=AsyncMock())
+    assert isinstance(gateway.oauth_metadata, CustomMetadata)
+    assert isinstance(gateway.oauth_rate_limit, CustomRateLimit)
+    metadata = CustomMetadata(settings())
+    gateway = Gateway(settings(), mcp_access_controller=AsyncMock(), oauth_metadata=metadata)
+    assert gateway.oauth_metadata is metadata
+    with pytest.raises(GatewayConfigurationError):
+        Gateway(oauth_metadata=metadata)

@@ -22,6 +22,7 @@ def principal_from_claims(
     if (
         claims.get("iss") != issuer
         or not isinstance(audiences, list)
+        or any(not isinstance(value, str) or not value for value in audiences)
         or resource not in audiences
         or type(expiry) is not int
         or expiry <= time.time() - skew
@@ -30,6 +31,8 @@ def principal_from_claims(
         or not isinstance(client, str)
         or not client
         or not isinstance(scope, str)
+        or any(ord(c) < 32 or ord(c) > 126 or c in '"\\' for c in scope)
+        or (claims.get("client_id") and claims.get("azp") and client != claims["azp"])
         or claims.get("token_use", "access") != "access"
     ):
         return None

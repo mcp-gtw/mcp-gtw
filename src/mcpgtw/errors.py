@@ -24,3 +24,9 @@ class ProviderRequestError(GatewayError):
 
 class ChannelCapacityError(GatewayError):
     """Raised when a channel or the registry exceeds a configured limit."""
+
+
+class OAuthRateLimitError(GatewayError):
+    def __init__(self, retry_after: int) -> None:
+        super().__init__("OAuth request budget exceeded")
+        self.retry_after = retry_after

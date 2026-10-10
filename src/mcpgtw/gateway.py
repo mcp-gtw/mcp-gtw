@@ -8,6 +8,7 @@ import logging
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 import mcp.types as types
@@ -31,23 +32,31 @@ from mcpgtw.errors import (
     ChannelReplacedError,
     GatewayConfigurationError,
     GatewayError,
+    OAuthRateLimitError,
     ProviderMessageError,
 )
 from mcpgtw.expiry import ExpiryPolicy, TtlExpiryPolicy
 from mcpgtw.listeners import GatewayListener
 from mcpgtw.oauth.access_error import McpAccessError
+from mcpgtw.oauth.authorization_server import AuthorizationServer
 from mcpgtw.oauth.canonical_endpoint import CanonicalMcpEndpoint
 from mcpgtw.oauth.channel_access import ChannelAccessPolicy
 from mcpgtw.oauth.client_access import McpClientAccessController, TokenMcpAccessController
+from mcpgtw.oauth.error_response import rate_limit_response, unavailable_response
 from mcpgtw.oauth.hybrid_client_access import HybridMcpAccessController
 from mcpgtw.oauth.introspection_verifier import IntrospectionAccessTokenVerifier
 from mcpgtw.oauth.jwt_verifier import JwtAccessTokenVerifier
 from mcpgtw.oauth.log_filter import OAuthLogFilter
 from mcpgtw.oauth.oauth_client_access import OAuthMcpAccessController
-from mcpgtw.oauth.rate_limit import OAuthRateLimitPolicy
-from mcpgtw.oauth.resource_metadata import OAuthMetadataPublisher
-from mcpgtw.oauth.session_binding import McpSessionBindingStore
+from mcpgtw.oauth.rate_limit import OAuthRateLimitPolicy, WindowOAuthRateLimitPolicy
+from mcpgtw.oauth.resource_metadata import (
+    OAuthMetadataPublisher,
+    ProtectedResourceMetadataPublisher,
+)
+from mcpgtw.oauth.secured_tools_result import SecuredToolsResult
+from mcpgtw.oauth.session_binding import McpSessionBindingStore, MemoryMcpSessionBindingStore
 from mcpgtw.oauth.token_verifier import AccessTokenVerifier
+from mcpgtw.oauth.tool_access import RequiredScopesToolAccess, ToolAccessPolicy
 from mcpgtw.origin import ListOriginPolicy, OriginPolicy
 from mcpgtw.registry import ChannelRegistry
 from mcpgtw.tokens import SecretsTokenProvider, TokenProvider
@@ -95,6 +104,10 @@ class Gateway(GatewayListener):
     authenticator_class: type[Authenticator] = TokenAuthenticator
 
     mcp_access_controller_class: type[McpClientAccessController] = TokenMcpAccessController
+    tool_access_policy_class: type[ToolAccessPolicy] = RequiredScopesToolAccess
+    oauth_rate_limit_class: type[OAuthRateLimitPolicy] = WindowOAuthRateLimitPolicy
+    oauth_metadata_class: type[OAuthMetadataPublisher] = ProtectedResourceMetadataPublisher
+    session_binding_store_class: type[McpSessionBindingStore] = MemoryMcpSessionBindingStore
 
     mcp_server_name: str = "mcp-gtw"
 
@@ -111,12 +124,20 @@ class Gateway(GatewayListener):
         authenticator: Authenticator | None = None,
         mcp_access_controller: McpClientAccessController | None = None,
         access_token_verifier: AccessTokenVerifier | None = None,
+        tool_access_policy: ToolAccessPolicy | None = None,
         channel_access: ChannelAccessPolicy | None = None,
         session_bindings: McpSessionBindingStore | None = None,
         oauth_rate_limit: OAuthRateLimitPolicy | None = None,
+        oauth_metadata: OAuthMetadataPublisher | None = None,
         static_channel_eligible: Callable[[Channel], bool] | None = None,
+        authorization_server: AuthorizationServer | None = None,
     ) -> None:
         self.settings = settings or self.settings_class()
+        self.mcp_path = (
+            urlsplit(self.settings.oauth_resource_url).path
+            if self.settings.oauth_mode != "off"
+            else "/mcp"
+        )
 
         if self.settings.oauth_mode != "off":
             logging.getLogger("uvicorn.error").addFilter(_OAUTH_LOG_FILTER)
@@ -126,7 +147,11 @@ class Gateway(GatewayListener):
                 "GATEWAY_ADMIN_KEY must be a non-empty value when GATEWAY_ADMIN_ENABLED is true"
             )
 
-        if self.settings.admin_enabled and self._admin_path_conflicts(self.settings.admin_path):
+        if self.settings.admin_enabled and (
+            self._admin_path_conflicts(self.settings.admin_path)
+            or self.settings.admin_path == self.mcp_path
+            or self.settings.admin_path.startswith(self.mcp_path + "/")
+        ):
             raise GatewayConfigurationError(
                 f"GATEWAY_ADMIN_PATH {self.settings.admin_path!r} collides with a built-in route"
             )
@@ -148,16 +173,27 @@ class Gateway(GatewayListener):
         )
         self.registry.add_listener(self)
         self.authenticator = authenticator or self.authenticator_class(self.registry)
-        self.oauth_rate_limit = oauth_rate_limit or OAuthRateLimitPolicy(
+        self.oauth_rate_limit = oauth_rate_limit or self.oauth_rate_limit_class(
             self.settings.oauth_rate_limit_requests,
             self.settings.oauth_rate_limit_window_seconds,
             self.settings.oauth_rate_limit_maximum_keys,
+            self.settings.oauth_rate_limit_backoff_seconds,
+            self.settings.oauth_rate_limit_maximum_backoff_seconds,
         )
+        if self.settings.oauth_mode == "off" and oauth_metadata is not None:
+            raise GatewayConfigurationError("OAuth metadata requires an enabled OAuth mode")
+
         self.oauth_metadata = (
-            OAuthMetadataPublisher(self.settings) if self.settings.oauth_mode != "off" else None
+            (oauth_metadata or self.oauth_metadata_class(self.settings))
+            if self.settings.oauth_mode != "off"
+            else None
         )
-        self.session_bindings = session_bindings or McpSessionBindingStore(
+        self.session_bindings = session_bindings or self.session_binding_store_class(
             self.settings.oauth_maximum_sessions, self.settings.mcp_session_idle_timeout_seconds
+        )
+        self.authorization_server = authorization_server
+        self.tool_access_policy = tool_access_policy or self.tool_access_policy_class(
+            frozenset(self.settings.oauth_required_scopes)
         )
         self._oauth_http_client: httpx.AsyncClient | None = None
         self.mcp_access_controller = self._build_access_controller(
@@ -175,10 +211,17 @@ class Gateway(GatewayListener):
         static_eligible: Callable[[Channel], bool] | None,
     ) -> McpClientAccessController:
         if self.settings.oauth_mode == "embedded":
-            raise GatewayConfigurationError(
-                "Embedded OAuth requires a complete durable authorization server; "
-                "activation is blocked"
-            )
+            if self.authorization_server is None:
+                raise GatewayConfigurationError(
+                    "Embedded OAuth requires an injected authorization server"
+                )
+
+            if controller is not None or verifier is not None:
+                raise GatewayConfigurationError("Embedded OAuth owns access token verification")
+
+            verifier = self.authorization_server
+        elif self.authorization_server is not None:
+            raise GatewayConfigurationError("Authorization server requires embedded OAuth mode")
 
         if controller is not None:
             return controller
@@ -236,6 +279,10 @@ class Gateway(GatewayListener):
         if self.settings.expose_version:
             app.version = self.settings.app_version
 
+        if self.oauth_metadata is not None:
+            app.add_exception_handler(OAuthRateLimitError, rate_limit_response)
+            app.add_exception_handler(McpAccessError, unavailable_response)
+
         app.state.gateway = self
         self.add_cors(app)
         self.register_routes(app)
@@ -279,14 +326,19 @@ class Gateway(GatewayListener):
 
                 app.add_api_route(path, self.oauth_metadata.metadata, methods=["GET"])
 
+        if self.authorization_server is not None:
+            self.authorization_server.register_routes(app)
+
         if self.oauth_metadata is not None:
             app.router.routes.append(
                 Route(
-                    "/mcp", CanonicalMcpEndpoint(self.mcp_asgi), methods=["GET", "POST", "DELETE"]
+                    self.mcp_path,
+                    CanonicalMcpEndpoint(self.mcp_asgi, self.mcp_path),
+                    methods=["GET", "POST", "DELETE"],
                 )
             )
 
-        app.mount("/mcp", self.mcp_asgi)
+        app.mount(self.mcp_path, self.mcp_asgi)
 
         if self.settings.admin_enabled:
             admin_path = self.settings.admin_path
@@ -397,10 +449,40 @@ class Gateway(GatewayListener):
 
         async def list_tools(ctx: Any, params: Any) -> types.ListToolsResult:
             channel, _, _ = context(ctx)
-            return types.ListToolsResult(tools=channel.list_tools())
+            tools = channel.list_tools()
+            access = ctx.request.scope.get("gateway_access_context")
+
+            if self.oauth_metadata is not None and access.credential_kind == "oauth":
+                return SecuredToolsResult(
+                    tools=[self.tool_access_policy.describe(channel, tool) for tool in tools]
+                )
+
+            return types.ListToolsResult(tools=tools)
 
         async def call_tool(ctx: Any, params: Any) -> types.CallToolResult:
             channel, session, progress_token = context(ctx)
+            access = ctx.request.scope.get("gateway_access_context")
+
+            if self.oauth_metadata is not None and access.credential_kind == "oauth":
+                scopes = self.tool_access_policy.required_scopes(channel, params.name)
+
+                try:
+                    current = await self.mcp_access_controller.authorize(ctx.request)
+
+                    if (
+                        current.channel is not channel
+                        or current.context.principal_id != access.principal_id
+                    ):
+                        raise McpAccessError("channel_forbidden")
+
+                    if not scopes <= current.context.scopes:
+                        raise McpAccessError("insufficient_scope")
+
+                except McpAccessError as exc:
+                    return self.tool_access_policy.challenge(
+                        self.oauth_metadata, exc.reason, scopes
+                    )
+
             return await channel.execute_tool(
                 name=params.name,
                 arguments=params.arguments or {},
@@ -528,7 +610,13 @@ class Gateway(GatewayListener):
 
         if self.oauth_metadata is not None and not self.oauth_rate_limit.admit(address):
             await self._json_response(
-                send, 429, {"error": "Request budget exceeded"}, {"retry-after": "1"}
+                send,
+                429,
+                {"error": "Request budget exceeded"},
+                {
+                    "retry-after": str(self.oauth_rate_limit.retry_after(address)),
+                    "cache-control": "no-store",
+                },
             )
             return
 
@@ -547,6 +635,23 @@ class Gateway(GatewayListener):
                 {"www-authenticate": challenge, "cache-control": "no-store"},
             )
             return
+
+        if authorized.context.credential_kind == "oauth":
+            for key in (
+                "client:" + authorized.context.issuer + "\0" + authorized.context.client_id,
+                "principal:" + authorized.context.principal_id,
+            ):
+                if not self.oauth_rate_limit.admit(key):
+                    await self._json_response(
+                        send,
+                        429,
+                        {"error": "Request budget exceeded"},
+                        {
+                            "retry-after": str(self.oauth_rate_limit.retry_after(key)),
+                            "cache-control": "no-store",
+                        },
+                    )
+                    return
 
         channel = authorized.channel
         requested_channel = scope["path"].removeprefix(scope.get("root_path", "")).strip("/")
@@ -581,6 +686,7 @@ class Gateway(GatewayListener):
 
             if (
                 self.registry.get(channel.channel_id) is not channel
+                or current.channel is not channel
                 or current.context.principal_id != authorized.context.principal_id
             ):
                 raise McpAccessError("channel_forbidden")
@@ -607,7 +713,15 @@ class Gateway(GatewayListener):
             if response_started:
                 await send({"type": "http.response.body", "body": b"", "more_body": False})
             else:
-                await self._json_response(send, exc.status_code, {"error": "MCP access denied"})
+                await self._json_response(
+                    send,
+                    exc.status_code,
+                    {"error": "MCP access denied"},
+                    {
+                        "www-authenticate": self.oauth_metadata.challenge(exc.reason),
+                        "cache-control": "no-store",
+                    },
+                )
 
     async def on_channel_removed(self, channel: Channel) -> None:
         self.session_bindings.remove_channel(channel.channel_id)

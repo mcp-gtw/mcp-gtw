@@ -14,6 +14,8 @@ from typing import Any
 import mcp.types as types
 from jsonschema import Draft202012Validator, ValidationError
 from mcp.server.lowlevel.helper_types import ReadResourceContents
+from referencing import Registry
+from referencing.exceptions import Unresolvable
 
 from mcpgtw import protocol
 from mcpgtw.compiled_tool import CompiledTool
@@ -258,9 +260,9 @@ class Channel:
 
             compiled[tool.name] = CompiledTool(
                 definition=tool,
-                input_validator=Draft202012Validator(tool.input_schema),
+                input_validator=Draft202012Validator(tool.input_schema, registry=Registry()),
                 output_validator=(
-                    Draft202012Validator(tool.output_schema)
+                    Draft202012Validator(tool.output_schema, registry=Registry())
                     if tool.output_schema is not None
                     else None
                 ),
@@ -312,6 +314,10 @@ class Channel:
             tool.input_validator.validate(arguments)
         except ValidationError as exc:
             return self.error_result(f"Input validation error for '{name}': {exc.message}")
+        except Unresolvable:
+            return self.error_result(
+                f"Input validation error for '{name}': unresolved schema reference"
+            )
 
         try:
             raw = await self._call_provider(
@@ -701,6 +707,10 @@ class Channel:
             tool.output_validator.validate(result.structured_content)
         except ValidationError as exc:
             return self.error_result(f"Output validation error for '{name}': {exc.message}")
+        except Unresolvable:
+            return self.error_result(
+                f"Output validation error for '{name}': unresolved schema reference"
+            )
 
         return result
 

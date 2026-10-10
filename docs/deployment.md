@@ -141,4 +141,15 @@ See [security](security.md) for the full hardening checklist.
 
 ## OAuth client authorization
 
-Public MCP OAuth is opt-in and requires explicit channel grants. Provider WebSocket credentials remain separate. See [OAuth configuration, extension contracts, transport gates and deployment limits](oauth.md). The embedded authorization server is blocked at startup and remains unimplemented.
+Public MCP OAuth is opt-in and requires explicit channel grants. Provider WebSocket credentials remain separate. See [OAuth configuration, extension contracts, transport gates and deployment limits](oauth.md). Embedded OAuth requires an injected durable authorization server; the demo game supplies local account login and consent.
+
+With OAuth enabled, the MCP mount is the exact path in `GATEWAY_OAUTH_RESOURCE_URL`, including any
+prefix. Preserve that path through the proxy, and forward `/.well-known/oauth-protected-resource`
+with the complete resource path. Embedded issuer prefixes use RFC 8414 discovery at
+`/.well-known/oauth-authorization-server<issuer-path>`, OIDC discovery at
+`<issuer-path>/.well-known/openid-configuration`, and endpoints at `<issuer-path>/oauth/*`.
+
+The runtime images remove setuid/setgid bits and unused mount, namespace, identity-switching and
+infocmp executables. These operations run after creating the unprivileged runtime account. Container
+scans still show the Debian package database's upstream alerts. See the applicability review in
+[security.md](security.md#container-audit-scope).

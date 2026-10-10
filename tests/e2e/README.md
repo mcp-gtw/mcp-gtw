@@ -5,3 +5,7 @@ Keep the `mcp-gtw-provider` checkout beside this repository. Run `make sdk-smoke
 This starts a loopback-only gateway with an explicitly injected test verifier and grants, two real JavaScript providers and the official Python MCP client. Each provider registers and executes an identity tool. It verifies OAuth and static credentials separately, denies access across channels, and rejects the internal MCP token of the OAuth-owned channel. Provider source and types are unchanged. Cryptographic JWT verification is covered by the gateway tests and the game HTTPS browser smoke; this fixture specifically tests public/private transport integration.
 
 Secrets are generated at runtime and written only to a private temporary file. Subprocesses are stopped and temporary credentials/logs removed. No remote application is contacted and no npm package is published.
+
+To verify the packaged SDK, extract its npm tarball into a temporary directory and run
+`uv run python tests/e2e/sdk_run.py --provider-module /absolute/path/package/src/index.js`.
+The providers then load that exact artifact module. The summary records `installedArtifact=true`.
