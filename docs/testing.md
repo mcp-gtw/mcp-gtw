@@ -95,7 +95,7 @@ The OAuth security cases are traceable to these suites:
 | --- | --- |
 | SEC-01/02/03/19/20 | `test_resource_server.py`: signatures, claims, ID-token rejection, bounded downloads, trusted JWKS rollover and introspection failure |
 | SEC-04/05/06 | `test_resource_server.py`, `gateway/test_security.py`: explicit grants, wrong owners/providers and session identity swapping |
-| SEC-07/22/23 | `test_resource_server.py`: request/chunk revocation, deletion and four official-client JSON/SSE/stateful/stateless combinations |
+| SEC-07/22/23 | `test_resource_server.py`: request/chunk revocation, deletion and eight official-client handshake/modern/JSON/SSE/stateful/stateless combinations |
 | SEC-08/09/10/11/12 | `test_embedded.py`: exact callbacks, CSRF, PKCE/resource/scope bindings, concurrent one-use codes and refresh-family reuse |
 | SEC-13/14 | `test_client_metadata.py`: non-public/mapped IPs, DNS pinning and actual peer, blocked redirects, malformed/oversized metadata and bounded cache |
 | SEC-15/16 | `test_embedded.py`, `test_client_metadata.py`: registration quotas, finite stores and endpoint request budgets |
@@ -103,7 +103,16 @@ The OAuth security cases are traceable to these suites:
 | SEC-21 | `test_resource_server.py`, `gateway/test_gateway.py`: log query redaction and version/admin exposure |
 | SEC-24/25 | `gateway/test_extensibility.py`, `gateway/test_channel.py`, `test_resource_server.py`: strategy injection, token regression and correlated reverse calls |
 | SEC-26/28 | `test_embedded.py` and demo `tests/e2e/proxy.py`: cookie/consent protections and real Docker/nginx HTTPS discovery |
-| HOST-08 | `test_resource_server.py`: serialized tool securitySchemes, missing-scope challenge, no provider execution and successful reauthorization |
+| HOST-08 | `test_resource_server.py`: actual HTTP securitySchemes in five protocol versions, Token/off isolation, missing-scope challenge, no provider execution and successful reauthorization |
+
+`test_tool_security_schemes_on_http_wire` reads the raw HTTP response before an MCP client can
+discard extension fields. It checks both top-level and `_meta` OAuth declarations, per-tool scopes,
+hostile provider `noauth` metadata, provider-definition immutability and empty registries. The matrix
+covers JSON/SSE, stateful/stateless sessions, OAuth/static/off credentials and protocol versions
+2024-11-05, 2025-03-26, 2025-06-18, 2025-11-25 and 2026-07-28. The modern version uses its required
+per-request envelope and `Mcp-Method` header instead of an initialization handshake. Every discovery
+request includes OpenAI metadata, which the SDK exposes as a dictionary. Testing a handler's model dump is insufficient
+because the SDK serializes it again against the negotiated protocol schema.
 
 The demo's `make embedded-smoke` uses the actual embedded AS and durable accounts in Chrome.
 `make oauth-smoke` exercises an external test IdP. Both use the official MCP client. The game's

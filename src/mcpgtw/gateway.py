@@ -53,10 +53,10 @@ from mcpgtw.oauth.resource_metadata import (
     OAuthMetadataPublisher,
     ProtectedResourceMetadataPublisher,
 )
-from mcpgtw.oauth.secured_tools_result import SecuredToolsResult
 from mcpgtw.oauth.session_binding import McpSessionBindingStore, MemoryMcpSessionBindingStore
 from mcpgtw.oauth.token_verifier import AccessTokenVerifier
 from mcpgtw.oauth.tool_access import RequiredScopesToolAccess, ToolAccessPolicy
+from mcpgtw.oauth.tool_metadata import OAuthToolMetadataMiddleware
 from mcpgtw.origin import ListOriginPolicy, OriginPolicy
 from mcpgtw.registry import ChannelRegistry
 from mcpgtw.tokens import SecretsTokenProvider, TokenProvider
@@ -444,7 +444,7 @@ class Gateway(GatewayListener):
         def context(ctx: Any) -> tuple[Channel, Any, str | int | None]:
             channel = self.channel_for_scope(ctx.request.scope)
             channel.remember_mcp_session(ctx.session)
-            progress_token = ctx.meta.progress_token if ctx.meta else None
+            progress_token = ctx.meta.get("progress_token") if ctx.meta else None
             return channel, ctx.session, progress_token
 
         async def list_tools(ctx: Any, params: Any) -> types.ListToolsResult:
@@ -453,7 +453,7 @@ class Gateway(GatewayListener):
             access = ctx.request.scope.get("gateway_access_context")
 
             if self.oauth_metadata is not None and access.credential_kind == "oauth":
-                return SecuredToolsResult(
+                return types.ListToolsResult(
                     tools=[self.tool_access_policy.describe(channel, tool) for tool in tools]
                 )
 
@@ -556,7 +556,7 @@ class Gateway(GatewayListener):
             channel.set_log_level(session, params.level)
             return types.EmptyResult()
 
-        return Server(
+        server = Server(
             self.mcp_server_name,
             version=self.settings.app_version,
             instructions=self.instructions(),
@@ -572,6 +572,11 @@ class Gateway(GatewayListener):
             on_completion=complete,
             on_set_logging_level=set_logging,
         )
+
+        if self.oauth_metadata is not None:
+            server.middleware.append(OAuthToolMetadataMiddleware())
+
+        return server
 
     def _build_manager(self) -> StreamableHTTPSessionManager:
         idle_timeout = (

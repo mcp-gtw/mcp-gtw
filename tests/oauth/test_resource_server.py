@@ -653,7 +653,8 @@ async def test_guard_identity_changed_and_invalid_session_cleanup():
 
 @pytest.mark.parametrize("stateless", [False, True])
 @pytest.mark.parametrize("json_response", [False, True])
-async def test_oauth_official_mcp_client_round_trip(stateless, json_response):
+@pytest.mark.parametrize("modern", [False, True])
+async def test_oauth_official_mcp_client_round_trip(stateless, json_response, modern):
     from mcp.client.session import ClientSession
     from mcp.client.streamable_http import streamable_http_client
     from support import FakeWebSocket
@@ -701,7 +702,11 @@ async def test_oauth_official_mcp_client_round_trip(stateless, json_response):
             streamable_http_client(RESOURCE, http_client=client) as (read, write),
             ClientSession(read, write) as session,
         ):
-            await session.initialize()
+            if modern:
+                await session.discover()
+            else:
+                await session.initialize()
+
             tools = (await session.list_tools()).tools
             assert tools[0].name == "hello"
             assert tools[0].meta["securitySchemes"] == [
@@ -719,7 +724,157 @@ async def test_oauth_official_mcp_client_round_trip(stateless, json_response):
                 principal(), scopes=frozenset({"mcp:access", "game:write"})
             )
             await grants.grant(verifier.verify.return_value, channel.channel_id)
-            assert (await session.call_tool("hello", {})).content[0].text == "authorized"
+            assert (
+                await session.call_tool(
+                    "hello", {}, meta={"openai/locale": "en-US", "progress_token": 7}
+                )
+            ).content[0].text == "authorized"
+
+
+@pytest.mark.parametrize("credential_kind", ["oauth", "static", "off"])
+@pytest.mark.parametrize("stateless", [False, True])
+@pytest.mark.parametrize("json_response", [False, True])
+@pytest.mark.parametrize(
+    "version", ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25", "2026-07-28"]
+)
+async def test_tool_security_schemes_on_http_wire(
+    credential_kind, stateless, json_response, version
+):
+    from mcpgtw.oauth.tool_access import RequiredScopesToolAccess
+
+    class OperationScopes(RequiredScopesToolAccess):
+        def required_scopes(self, channel, tool_name):
+            return super().required_scopes(channel, tool_name) | {f"game:{tool_name}"}
+
+    verifier = AsyncMock()
+    verifier.verify.return_value = principal()
+    grants = MemoryChannelGrantStore()
+    transport_settings = {"mcp_stateless": stateless, "mcp_json_response": json_response}
+    gateway = (
+        Gateway(GatewaySettings(**transport_settings))
+        if credential_kind == "off"
+        else Gateway(
+            settings(**transport_settings, oauth_allow_static_mcp_tokens=True),
+            access_token_verifier=verifier,
+            channel_access=DenyUnlessGranted(grants),
+            static_channel_eligible=lambda channel: True,
+            tool_access_policy=OperationScopes(frozenset({"mcp:access"})),
+        )
+    )
+    app = gateway.create_app()
+
+    def wire_result(response):
+        assert response.status_code == 200
+
+        if json_response or version == "2026-07-28":
+            assert response.headers["content-type"].startswith("application/json")
+            return response.json()["result"]
+
+        assert response.headers["content-type"].startswith("text/event-stream")
+        messages = [
+            json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")
+        ]
+        assert len(messages) == 1
+        return messages[0]["result"]
+
+    async with app.router.lifespan_context(app):
+        channel = await gateway.create_channel()
+        await channel.register(
+            "tools",
+            [
+                {
+                    "name": "read",
+                    "description": "Read the game",
+                    "inputSchema": {"type": "object"},
+                    "_meta": {"securitySchemes": [{"type": "noauth"}], "provider": "read"},
+                },
+                {"name": "write", "inputSchema": {"type": "object"}},
+            ],
+        )
+        originals = [
+            tool.model_dump(by_alias=True, exclude_none=True) for tool in channel.list_tools()
+        ]
+        await grants.grant(principal(), channel.channel_id)
+        token = "access-token" if credential_kind == "oauth" else channel.mcp_token
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app),
+            base_url=RESOURCE.removesuffix("/mcp"),
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json, text/event-stream",
+                "MCP-Protocol-Version": version,
+            },
+            follow_redirects=True,
+        ) as client:
+            list_params = {
+                "_meta": {
+                    "openai/locale": "en-US",
+                    "openai/userAgent": "ChatGPT",
+                    "openai/subject": "untrusted-user-hint",
+                }
+            }
+
+            if version == "2026-07-28":
+                client.headers["Mcp-Method"] = "tools/list"
+                list_params["_meta"].update(
+                    {
+                        "io.modelcontextprotocol/protocolVersion": version,
+                        "io.modelcontextprotocol/clientCapabilities": {},
+                    }
+                )
+            else:
+                initialized = await client.post(
+                    "/mcp",
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "initialize",
+                        "params": {
+                            "protocolVersion": version,
+                            "capabilities": {},
+                            "clientInfo": {"name": "wire-review", "version": "1"},
+                        },
+                    },
+                )
+                assert wire_result(initialized)["protocolVersion"] == version
+
+                if not stateless:
+                    client.headers["Mcp-Session-Id"] = initialized.headers["mcp-session-id"]
+
+                notified = await client.post(
+                    "/mcp", json={"jsonrpc": "2.0", "method": "notifications/initialized"}
+                )
+                assert notified.status_code == 202
+
+            listed = wire_result(
+                await client.post(
+                    "/mcp",
+                    json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": list_params},
+                )
+            )["tools"]
+
+            if credential_kind == "oauth":
+                for tool in listed:
+                    schemes = [{"type": "oauth2", "scopes": [f"game:{tool['name']}", "mcp:access"]}]
+                    assert tool["securitySchemes"] == schemes
+                    assert tool["_meta"]["securitySchemes"] == schemes
+
+                assert listed[0]["_meta"]["provider"] == "read"
+            else:
+                assert listed == originals
+
+            assert [
+                tool.model_dump(by_alias=True, exclude_none=True) for tool in channel.list_tools()
+            ] == originals
+            await channel.register("tools", [])
+            empty = wire_result(
+                await client.post(
+                    "/mcp",
+                    json={"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": list_params},
+                )
+            )
+            assert empty["tools"] == []
 
 
 def test_rate_limit_capacity_expiry_and_config(monkeypatch):
@@ -890,7 +1045,7 @@ async def test_tool_auth_metadata_and_revocation_after_admission(injected):
     listed = await gateway.server._request_handlers["tools/list"].handler(
         ctx, PaginatedRequestParams()
     )
-    assert listed.model_dump(by_alias=True)["tools"][0]["securitySchemes"] == [
+    assert listed.tools[0].meta["securitySchemes"] == [
         {"type": "oauth2", "scopes": ["game:write", "mcp:access"]}
     ]
     assert channel.list_tools()[0].meta is None

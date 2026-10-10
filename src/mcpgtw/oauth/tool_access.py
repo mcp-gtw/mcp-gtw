@@ -6,19 +6,15 @@ from mcp.types import CallToolResult, TextContent, Tool
 
 from mcpgtw.channel import Channel
 from mcpgtw.oauth.resource_metadata import OAuthMetadataPublisher
-from mcpgtw.oauth.secured_tool import SecuredTool
 
 
 class ToolAccessPolicy(ABC):
     @abstractmethod
     def required_scopes(self, channel: Channel, tool_name: str) -> frozenset[str]: ...
 
-    def describe(self, channel: Channel, tool: Tool) -> SecuredTool:
+    def describe(self, channel: Channel, tool: Tool) -> Tool:
         schemes = [{"type": "oauth2", "scopes": sorted(self.required_scopes(channel, tool.name))}]
-        return SecuredTool(
-            **{**tool.model_dump(), "meta": {**(tool.meta or {}), "securitySchemes": schemes}},
-            securitySchemes=schemes,
-        )
+        return tool.model_copy(update={"meta": {**(tool.meta or {}), "securitySchemes": schemes}})
 
     def challenge(
         self, metadata: OAuthMetadataPublisher, reason: str, scopes: frozenset[str]

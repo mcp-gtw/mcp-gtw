@@ -92,6 +92,8 @@ This repo is published to PyPI as `mcp-gtw` (the import package stays `mcpgtw`).
   [docs/mcp-clients.md](docs/mcp-clients.md), [docs/testing.md](docs/testing.md).
 - **OAuth** — public MCP authorization, pluggable durable identity/consent, responsive monochrome script-free authorization pages, separate login/code lifetimes, safe CIMD, and provider credential boundaries: [docs/oauth.md](docs/oauth.md).
 - **OAuth consent browser gate** — validated cross-origin callbacks are permitted by CSP, and real HTTPS browser approval/denial/tampering tests gate every PR and release: [docs/testing.md](docs/testing.md#oauth-client-authorization).
+- **OAuth tool discovery** — public SDK middleware preserves policy-controlled `securitySchemes`
+  after protocol serialization, verified on raw JSON/SSE responses: [docs/oauth.md](docs/oauth.md#tool-authorization).
 
 - **OAuth acceptance checklist** — detailed architecture, SEC/GAME/SDK/HOST/UPG requirements and execution evidence: [docs/oauth-implementation-checklist.md](docs/oauth-implementation-checklist.md). Keep open external checks explicit.
 
@@ -206,3 +208,5 @@ change. Treat a doc that describes something the code no longer does as a bug.
   file free of other `{`/`}`. `web/admin.html` is served raw (its JS braces are fine).
 - Package data (`web/*`, `py.typed`) must ship in the wheel — hatchling includes
   everything under the package.
+- SDK request metadata is a dictionary with normalized keys such as `progress_token`. Modern MCP
+  requests always carry metadata, so exercise per-request discovery as well as initialization.
