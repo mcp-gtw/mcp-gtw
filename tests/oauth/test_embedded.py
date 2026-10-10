@@ -19,7 +19,7 @@ from starlette.requests import Request
 from mcpgtw.config import GatewaySettings
 from mcpgtw.errors import GatewayConfigurationError, OAuthRateLimitError
 from mcpgtw.gateway import Gateway
-from mcpgtw.oauth.authorization_server import EmbeddedAuthorizationServer
+from mcpgtw.oauth.authorization_server import HEADERS, EmbeddedAuthorizationServer
 from mcpgtw.oauth.channel_access import DenyUnlessGranted
 from mcpgtw.oauth.channel_grants import MemoryChannelGrantStore
 from mcpgtw.oauth.client_registry import OAuthClientRegistry
@@ -160,6 +160,81 @@ def exchange(authorization_code, **changes):
         "resource": RESOURCE,
         **changes,
     }
+
+
+@pytest.mark.parametrize(
+    ("redirect", "source"),
+    [
+        (
+            "https://chatgpt.com/connector_platform_oauth_redirect",
+            "https://chatgpt.com/connector_platform_oauth_redirect",
+        ),
+        ("https://host.example/callback?next=https://attacker.example", REDIRECT),
+        ("https://host.example:9443/callback", "https://host.example:9443/callback"),
+        ("https://[::1]:9443/callback", "https://[::1]:9443/callback"),
+        ("http://127.0.0.1:8001/callback", "http://127.0.0.1:8001/callback"),
+        (
+            "https://host.example/callback;script-src=*",
+            "https://host.example/callback%3Bscript-src%3D%2A",
+        ),
+        ("https://host.example/callback'", "https://host.example/callback%27"),
+        ("https://host.example/callback%20name", "https://host.example/callback%20name"),
+        (ISSUER + "/app/oauth/callback", ISSUER + "/app/oauth/callback"),
+    ],
+)
+@pytest.mark.parametrize("action", ["allow", "deny"])
+async def test_consent_policy_permits_only_selected_callback_without_directive_injection(
+    service, redirect, source, action
+):
+    server, client = service
+    server.clients.add(
+        "selected-host",
+        {"redirect_uris": [redirect, REDIRECT], "token_endpoint_auth_method": "none"},
+    )
+    await code_for(client)
+    response = await client.get(
+        "/oauth/authorize",
+        params={
+            "response_type": "code",
+            "client_id": "selected-host",
+            "redirect_uri": redirect,
+            "scope": "mcp:access",
+            "resource": RESOURCE,
+            "state": "selected-state",
+            "code_challenge": CHALLENGE,
+            "code_challenge_method": "S256",
+        },
+    )
+    assert response.status_code == 303
+    consent = await client.get("/oauth/consent")
+    expected = HEADERS["Content-Security-Policy"].replace(
+        "form-action 'self'", "form-action 'self' " + source
+    )
+    assert consent.headers["content-security-policy"] == expected
+    assert consent.headers["referrer-policy"] == "same-origin"
+    response = await client.post(
+        "/oauth/consent",
+        data={"csrf": client.cookies["oauth_csrf"], "action": action},
+        headers={"origin": ISSUER},
+    )
+    assert response.status_code == 303
+    assert response.headers["content-security-policy"] == expected
+    assert response.headers["referrer-policy"] == "no-referrer"
+    callback = urlsplit(response.headers["location"])
+    assert callback.scheme == urlsplit(redirect).scheme
+    assert callback.netloc == urlsplit(redirect).netloc
+    params = parse_qs(callback.query)
+    assert params["state"] == ["selected-state"]
+    assert params["iss"] == [ISSUER]
+    assert ("code" in params) == (action == "allow")
+    assert ("error" in params) == (action == "deny")
+    expired = await client.get("/oauth/consent")
+    assert expired.status_code == 403
+    assert expired.headers["content-security-policy"] == HEADERS["Content-Security-Policy"]
+    assert (
+        server.login_form().headers["content-security-policy"] == HEADERS["Content-Security-Policy"]
+    )
+    assert "form-action 'self';" in HEADERS["Content-Security-Policy"]
 
 
 async def test_complete_pkce_refresh_reuse_logout_and_discovery(service):

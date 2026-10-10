@@ -23,6 +23,7 @@ Brewfile.lock.json
 # node
 node_modules
 package-lock.json
+!tests/e2e/browser/package-lock.json
 
 # cmake
 CMakeUserPresets.json

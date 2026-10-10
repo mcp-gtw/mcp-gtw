@@ -91,6 +91,7 @@ This repo is published to PyPI as `mcp-gtw` (the import package stays `mcpgtw`).
 - **Quickstart / MCP clients / testing** — [docs/quickstart.md](docs/quickstart.md),
   [docs/mcp-clients.md](docs/mcp-clients.md), [docs/testing.md](docs/testing.md).
 - **OAuth** — public MCP authorization, pluggable durable identity/consent, responsive monochrome script-free authorization pages, separate login/code lifetimes, safe CIMD, and provider credential boundaries: [docs/oauth.md](docs/oauth.md).
+- **OAuth consent browser gate** — validated cross-origin callbacks are permitted by CSP, and real HTTPS browser approval/denial/tampering tests gate every PR and release: [docs/testing.md](docs/testing.md#oauth-client-authorization).
 
 - **OAuth acceptance checklist** — detailed architecture, SEC/GAME/SDK/HOST/UPG requirements and execution evidence: [docs/oauth-implementation-checklist.md](docs/oauth-implementation-checklist.md). Keep open external checks explicit.
 
@@ -167,6 +168,7 @@ make coverage      # pytest behind the 100% gate
 make version v=X.Y.Z  # rewrite the pyproject.toml version (validates semver)
 make build         # uv build (wheel + sdist)
 make sdk-smoke     # real JS providers with isolated Token/OAuth MCP clients
+make consent-smoke # real HTTPS cross-origin consent with Chromium
 make oauth-benchmark # bounded 1000-channel controller/session benchmark
 make run           # serve the bare gateway on 127.0.0.1:8000
 ```
