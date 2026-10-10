@@ -622,12 +622,28 @@ Production deployment and actual ChatGPT/Claude workspace acceptance remain unex
   612 tests per interpreter. Evidence: `/tmp/oauth-discovery-final-{3.12,3.13,3.14}.log`.
 - [x] Complete actual HTTPS Chrome approval/denial/code exchange and hostile form-destination
   checks without unexpected browser errors. Evidence: `/tmp/oauth-discovery-browser.log`.
-- [ ] Open the correction PR and verify its three-version and browser CI gates.
+- [x] Open and merge the correction PR after its three-version and browser CI gates pass.
+  [Gateway PR](https://github.com/mcp-gtw/mcp-gtw/pull/14),
+  [CI](https://github.com/mcp-gtw/mcp-gtw/actions/runs/38031627559).
 - [x] Capture the actual ChatGPT OAuth callback HTTP 424 response. It reports
   `MCP_ACTION_DISCOVERY_FAILED` with cause `Internal server error`, matching the production traceback.
-- [ ] Publish 0.0.12 after its CI succeeds and verify the actual PyPI artifacts against source.
-- [ ] Update the game's PyPI dependency and lockfile only after publication, add a modern
-  discovery/gameplay regression to its integration gate and complete its CI before merging.
+- [x] Publish 0.0.12 after its CI succeeds and verify the actual PyPI artifacts against source.
+  [Publication](https://github.com/mcp-gtw/mcp-gtw/actions/runs/38031730908),
+  [release](https://github.com/mcp-gtw/mcp-gtw/releases/tag/v0.0.12).
+  Evidence: `/tmp/oauth-discovery-pypi-evidence.json` (all 66 source/package data files match).
+- [x] Update the game's PyPI dependency and lockfile only after publication. Add modern
+  discovery/gameplay to its embedded and external-IdP browser gates and the installed Docker/nginx
+  host-first integration. Keep initialized-client coverage in the proxy's other flows.
+- [x] Pass game Python 3.12/3.13/3.14 with 235 tests per interpreter and the client with 45 tests,
+  all at 100% line/branch coverage. Exercise ten tools, actual Token/OAuth movement, refresh,
+  replay rejection, browser adoption and logout in Chrome without unexpected errors. The image
+  uses Python 3.14.8 and the published gateway 0.0.12, and nginx HTTPS host-first gameplay succeeds.
+  Evidence: `/tmp/oauth-discovery-game-{3.12,3.13,3.14}.log`,
+  `/tmp/oauth-discovery-game-client.log`, `/tmp/oauth-discovery-game-browser.log`,
+  `/tmp/oauth-discovery-game-external.log`, `/tmp/oauth-discovery-game-proxy.log`.
+- [x] Complete the game PR's three-version and browser CI before merging.
+  [Game PR](https://github.com/mcp-gtw/demo-game/pull/11),
+  [CI](https://github.com/mcp-gtw/demo-game/actions/runs/38032095022).
 - [ ] Confirm successful action discovery in the actual ChatGPT workspace before reporting the
   production integration as resolved. Public endpoint and official-client checks cannot establish
   that the host imported its tools successfully.
