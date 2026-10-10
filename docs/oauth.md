@@ -63,7 +63,7 @@ requirements are visible in the form. Failed credentials use a neutral HTML mess
 distinguish unknown accounts, incorrect passwords or duplicate registrations and never echoes either
 credential. `SqlitePasswordIdentity` disables registration by default.
 
-Embedded sign-in, consent and expired-flow pages share a responsive, script-free template at
+Embedded sign-in, consent and expired-flow pages share a responsive, dark, script-free template at
 `web/oauth.html`. Labels are associated with their fields, short credential hints remain visible,
 errors are announced through an alert, and keyboard focus is visible. Consent keeps the client name
 and requested scopes visible while exact client, resource and callback values are available in
