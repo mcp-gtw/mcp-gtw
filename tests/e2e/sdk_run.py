@@ -30,17 +30,24 @@ async def verify(config):
         for name in config["channels"]:
             token = config[name]["mcp"] if name == "static" else config["access"]
 
-            async with (
-                httpx2.AsyncClient(headers={"Authorization": "Bearer " + token}) as transport,
-                streamable_http_client(
-                    "http://127.0.0.1:19480/mcp/" + name, http_client=transport
-                ) as (read, write),
-                ClientSession(read, write) as session,
-            ):
-                await session.initialize()
-                assert len((await session.list_tools()).tools) == 1
-                result = await session.call_tool("identity", {})
-                assert result.structured_content == {"channel": name}
+            for modern in (False, True):
+                async with (
+                    httpx2.AsyncClient(headers={"Authorization": "Bearer " + token}) as transport,
+                    streamable_http_client(
+                        "http://127.0.0.1:19480/mcp/" + name, http_client=transport
+                    ) as (read, write),
+                    ClientSession(read, write) as session,
+                ):
+                    if modern:
+                        await session.discover()
+                    else:
+                        await session.initialize()
+
+                    assert len((await session.list_tools()).tools) == 1
+                    result = await session.call_tool(
+                        "identity", {}, meta={"openai/locale": "en-US"}
+                    )
+                    assert result.structured_content == {"channel": name}
 
         response = await client.post(
             "http://127.0.0.1:19480/mcp/static",
@@ -59,6 +66,7 @@ async def verify(config):
                     "oauthProvider": True,
                     "crossChannelDenied": True,
                     "internalTokenDenied": True,
+                    "modernProtocol": True,
                     "sourceUnchanged": True,
                     "installedArtifact": config["installed_artifact"],
                 }

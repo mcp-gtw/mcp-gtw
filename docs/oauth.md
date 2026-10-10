@@ -36,6 +36,11 @@ Both `/.well-known/oauth-protected-resource` and the RFC 9728 path variant (for 
 
 The authorization decision installs an immutable `McpAccessContext` on the ASGI scope. Before entering the SDK manager, every supplied `Mcp-Session-Id` is checked against channel, credential kind, principal, issuer and client. Scopes are evaluated on each request. Valid token renewal for the same identity can reuse a session. GET, POST and DELETE use the same gate. Bindings are process-local because the SDK sessions are process-local; they expire, have a capacity limit, and are removed on DELETE, channel removal and shutdown.
 
+Request metadata follows the current SDK's dictionary contract, including its normalized
+`progress_token` key. Client hints such as `openai/locale`, `openai/userAgent` and `openai/subject`
+do not establish identity or channel access. The same authorization gates apply to initialization
+protocols and 2026-07-28 per-request envelopes.
+
 Before each emitted response chunk, the gateway checks current grants, expiry and channel identity again. A revocation stops new emissions. An already admitted request/tool execution is not canceled, and a chunk already handed to the server may finish draining. An idle SSE connection closes on the next attempted emission; there is no background idle-stream expiry timer. Correlated reverse calls remain supported; uncorrelated OAuth reverse calls are denied to avoid selecting another client's session.
 
 The configurable request budgets track the trusted ASGI client address, verified OAuth client and principal. Budget exhaustion applies progressive backoff and returns HTTP 429 with Retry-After. Configure proxy trust explicitly and restrict origin access; a reverse proxy that groups clients under one address will share the budget. This process-local policy is not a distributed limiter. Introspection may require an IdP-side cache/rate policy for high-volume SSE streams.
@@ -83,6 +88,14 @@ Pre-registration is always available. CIMD is enabled by default: a public clien
 ## Tool authorization
 
 OAuth tool listings carry `securitySchemes` at the top level and in `_meta`, with scopes computed by the injected `ToolAccessPolicy`. Provider definitions are copied rather than changed. Static Token listings retain their original wire shape and never advertise anonymous access. Immediately before an OAuth tool is dispatched, its credentials are reverified, the original channel and principal are confirmed, and its required scopes checked; denial returns an error tool result with `_meta["mcp/www_authenticate"]`, including the canonical resource metadata URL, requested scopes, error and error_description. No denied tool is sent to the provider. HTTP authentication remains mandatory before discovery of a channel's tools.
+
+`ToolAccessPolicy.describe` copies the standard MCP `Tool` and supplies its authorized `_meta`.
+`OAuthToolMetadataMiddleware` uses the SDK's public `Server.middleware` chain to publish the matching
+top-level field after protocol serialization. The SDK validates results against each version's MCP
+models and removes custom top-level model fields, so a subclass of `Tool` alone cannot publish this
+extension. The middleware only changes OAuth `tools/list` responses and preserves SDK validation,
+the result envelope and provider metadata. Authorization scopes always come from the application
+policy, including when a provider attempts to advertise `noauth`.
 
 The default `RequiredScopesToolAccess` requires the transport's minimum scopes on every tool. Override `required_scopes(channel, tool_name)` to add operation-specific scopes, inject `Gateway(tool_access_policy=...)` or set `tool_access_policy_class` on a subclass. Include every available scope in `GATEWAY_OAUTH_SUPPORTED_SCOPES`; only `GATEWAY_OAUTH_REQUIRED_SCOPES` is mandatory for all transport requests. The embedded AS requests explicit consent for those scopes and never expands them on refresh. Valid renewed tokens retain the same session identity.
 

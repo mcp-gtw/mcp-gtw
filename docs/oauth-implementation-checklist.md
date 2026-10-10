@@ -217,7 +217,9 @@ Evidence lives in demo `tests/test_oauth_gateway.py`, `tests/test_embedded_oauth
 - [x] HOST-10: actual local HTTPS proxy returns canonical public discovery/redirect URLs, tested
   independently of remote account connectivity.
 - [ ] HOST-11: real ChatGPT account/workspace login and tools/list/call on a deployed authorized
-  HTTPS endpoint. NOT TESTED, no account or deployed final endpoint is available to this session.
+  HTTPS endpoint. Production authentication succeeds, but action discovery fails on 0.0.11.
+  Its server traceback confirms dictionary metadata read as an object. Keep this open until the
+  corrected deployment imports and executes tools in the actual host workspace.
 - [ ] HOST-12: record each other real host separately. Inspector 2.10.1 and official Python MCP 2.3.0
   are locally tested. Real Claude/Cursor/Codex account connections are NOT TESTED.
 
@@ -586,3 +588,46 @@ Production deployment and actual ChatGPT/Claude workspace acceptance remain unex
   [CI](https://github.com/mcp-gtw/demo-game/actions/runs/38026992108).
   Production deployment and authenticated ChatGPT/Claude workspace acceptance remain separate,
   unexecuted checks.
+
+### Production action discovery correction for 0.0.12
+
+- [x] Verify production issuer/resource discovery, real browser login, CIMD client code exchange,
+  ten MCP tools, game login and movement with the official MCP client. These checks exercise the
+  deployed game but do not use the ChatGPT backend. Evidence: `/tmp/oauth-prod-review.log`.
+- [x] Verify production refresh-token rotation and raw MCP discovery independently of browser
+  login. Requests with no Origin or the game Origin return ten tools. The configured origin policy
+  rejects `https://chatgpt.com`. This rejection does not prove that ChatGPT sends that Origin.
+  Evidence: `/tmp/oauth-prod-refresh-review.log`.
+- [x] Reproduce missing top-level `securitySchemes` on production and local HTTP responses,
+  despite the earlier handler-model assertion. The SDK's protocol serializer removes custom Tool
+  subclass fields. Preserve the extension through its public middleware API after serialization.
+- [x] Replace redundant secured Tool/result subclasses with standard MCP models and isolated
+  OAuth metadata middleware. Preserve provider registrations, policy injection, per-tool scopes,
+  static Token responses, transport authorization and SDK protocol validation.
+- [x] Reproduce the reported internal error when `tools/list` carries metadata. The production
+  traceback and local failure both identify `ctx.meta.progress_token`, incompatible with the
+  SDK's current dictionary metadata contract. Read its normalized `progress_token` key directly.
+  Evidence: `/tmp/oauth-discovery-meta-reproduction.log` and the supplied production traceback.
+- [x] Add raw HTTP regression tests across five protocol versions, JSON/SSE, stateful/stateless
+  sessions and OAuth/static/off modes. Require both OAuth metadata locations, hostile provider
+  metadata replacement, original registration immutability and empty tool lists. Send OpenAI
+  client hints and the required 2026-07-28 envelope and Mcp-Method header.
+- [x] Verify official-client discovery and tool execution through initialization and modern
+  discovery with metadata and a numeric progress token. Missing scopes deny execution, and
+  authorized renewed credentials work in all eight transport/session/protocol combinations.
+- [x] Exercise actual JavaScript providers over WebSocket and official MCP clients over HTTP
+  in Token and OAuth modes through both initialization and modern discovery.
+  Evidence: `/tmp/oauth-discovery-sdk.log`.
+- [x] Pass final Python 3.12/3.13/3.14 lint and full 100% line/branch coverage gates with
+  612 tests per interpreter. Evidence: `/tmp/oauth-discovery-final-{3.12,3.13,3.14}.log`.
+- [x] Complete actual HTTPS Chrome approval/denial/code exchange and hostile form-destination
+  checks without unexpected browser errors. Evidence: `/tmp/oauth-discovery-browser.log`.
+- [ ] Open the correction PR and verify its three-version and browser CI gates.
+- [x] Capture the actual ChatGPT OAuth callback HTTP 424 response. It reports
+  `MCP_ACTION_DISCOVERY_FAILED` with cause `Internal server error`, matching the production traceback.
+- [ ] Publish 0.0.12 after its CI succeeds and verify the actual PyPI artifacts against source.
+- [ ] Update the game's PyPI dependency and lockfile only after publication, add a modern
+  discovery/gameplay regression to its integration gate and complete its CI before merging.
+- [ ] Confirm successful action discovery in the actual ChatGPT workspace before reporting the
+  production integration as resolved. Public endpoint and official-client checks cannot establish
+  that the host imported its tools successfully.
