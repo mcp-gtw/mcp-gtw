@@ -93,8 +93,11 @@ The issuer is an exact HTTPS URI and may include a path prefix. RFC 8414 discove
 Add the application's MCP endpoint to the MCP client. The client discovers the authorization server
 and starts authorization with its registered callback, state and PKCE challenge. `/oauth/login`
 and `/oauth/authorize` are transaction routes, not standalone connection URLs. A valid issuer login
-session skips the sign-in form and proceeds to explicit consent. The demo game also signs the
-browser in separately to establish ownership of the channel shown in its OAuth connection options.
+session skips the sign-in form and proceeds to explicit consent. The embedded demo game exposes
+its canonical public endpoint before browser login. Verified account login and explicit MCP client
+consent can establish the account-owned game channel first. A later browser login reuses that
+channel to watch the same player. External identity providers require application-owned channel
+provisioning and grants.
 
 The MCP mount follows the configured resource path, including any public prefix. The proxy must preserve this path. Use an exact HTTPS public resource URL, such as `https://mcpgame.paulox.dev/mcp` in the game. A client authorization request and token exchange must include that exact `resource`, even when connecting to a channel-specific path. With an external IdP, register exact callback URLs and public MCP client IDs there, with Authorization Code and PKCE S256. With the embedded server, pre-register clients or explicitly enable DCR so hosts can register their callbacks. HTTPS localhost exceptions require the separate development flag; keep that flag disabled in production.
 
@@ -138,3 +141,10 @@ Consent pages show the escaped client name, exact client ID, target resource, re
 registered callback. Client-provided names alone are not identity evidence. With an issuer path
 prefix, both first login and already-authenticated authorization redirect to the single canonical
 prefixed consent endpoint. The prefix regression follows that actual redirect.
+
+
+The packaged authorization pages use a monochrome dark layout: near-black background and inputs,
+subtle gray borders, white primary actions, visible focus and compact credential hints. They remain
+script-free, responsive and shared across sign-in, consent, neutral errors and expired transactions.
+The username/password identity strategy remains unchanged. Visual references do not add unimplemented
+social login, email identity, password recovery or magic-link actions.

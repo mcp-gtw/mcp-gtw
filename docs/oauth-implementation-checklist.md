@@ -446,3 +446,52 @@ checks. These release and local integration results do not claim validation of t
   [Game PR](https://github.com/mcp-gtw/demo-game/pull/6).
 
 Production deployment and real ChatGPT/Claude workspace acceptance remain unexecuted.
+
+
+## Public endpoint and monochrome reference revision
+
+- [x] Expose the configured canonical OAuth MCP endpoint through anonymous `/app/info`, with no
+  cookies, tokens, account identifiers or channel creation. Forged Host headers cannot change it.
+- [x] Offer the endpoint and an actual clipboard action in the initial OAuth/dual menu, without
+  choosing a browser authentication method or opening a WebSocket. Token-only mode omits it.
+- [x] Follow the user's intended client-first flow: anonymous MCP request, resource metadata,
+  authorization-server discovery, registered client, PKCE challenge, real account login/signup,
+  explicit named consent and code exchange. Use `/mcp` as the connection URL.
+- [x] Create the random account-owned channel only after verified identity and explicit MCP
+  consent, with supported scopes and the exact canonical resource. Capacity exhaustion denies
+  approval without allocating an additional channel or issuing a code.
+- [x] Preserve read-only code/refresh validation. Unknown subjects, revoked grants, removed scopes
+  and expired permissions cannot create, restore or renew a channel through validation or refresh.
+  Explicit new consent may renew the authenticated account's grant.
+- [x] Bound host-only and not-yet-connected OAuth channels by `APP_SESSION_IDLE_SECONDS`. Idle
+  teardown removes the player, channel, grants, login state, pending codes and token families.
+  A real browser socket cancels pending cleanup, and its disconnect uses the configured grace.
+  A raced idle timer cannot remove a connected session.
+- [x] Reuse the same account channel and playable character when the browser signs in after MCP
+  tools have started gameplay. Keep browser tickets, account identity and Token credentials separate.
+- [x] Test consent denial, forged CSRF, two independently registered accounts, cross-channel
+  impersonation, bounded channel allocation, host-only expiry, stale refresh and connected logout.
+  OAuth revocation leaves Token sessions intact, including an erroneous Token channel target.
+- [x] Match the supplied visual reference with near-black surfaces, restrained gray borders,
+  white actions, a prominent heading and compact hints. Retain functional username/password login
+  and signup. Do not add unsupported Google, recovery or magic-link controls from the reference.
+- [x] Verify the shared script-free layout in Chrome at 1440x900, 390x844, 320x568 and 844x390,
+  including focus, touch targets, no horizontal overflow, consent details, neutral retries,
+  disabled signup and expired transactions. Evidence: `/tmp/oauth-reference-browser.log`.
+- [x] Run the real HTTPS game and official MCP client through discovery, client-first signup,
+  consent, initialize, ten tools, login and movement before browser login. Confirm later browser
+  login watches the same player, public URL clipboard works before login, refresh and replay
+  protections remain enforced, and simultaneous Token/OAuth gameplay has no browser errors.
+  Evidence: `/tmp/oauth-host-first-browser.log`.
+- [x] Complete the supported Python matrix and repeat the external-IdP browser smoke, retaining
+  the published PyPI dependency in the game rather than substituting gateway source or a commit.
+  Gateway: 530 tests. Game: 235 tests. Frontend: 44 tests. Line/branch coverage is 100%.
+  Evidence: `/tmp/oauth-monochrome-core-{3.12,3.13,3.14}.log`,
+  `/tmp/oauth-game-{3.12,3.13,3.14}-host-first-published.log`,
+  `/tmp/oauth-public-url-gates.log`, `/tmp/oauth-host-first-external.log`.
+- [ ] Show new login, consent and public endpoint screenshots and obtain visual approval before
+  merging or publishing this revision.
+- [ ] Publish the approved gateway revision, verify PyPI artifacts, then update the game's registry
+  dependency and repeat combined browser/container checks before integrating its PR.
+
+Production deployment and actual ChatGPT/Claude workspace acceptance remain unexecuted.

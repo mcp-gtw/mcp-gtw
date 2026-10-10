@@ -235,21 +235,22 @@ class EmbeddedAuthorizationServer(AuthorizationServer):
         error = '<p class="notice" role="alert">' + html.escape(message) + "</p>" if message else ""
         response = self.page(
             "Sign in",
-            "<p>Continue with your account.</p>"
+            "<p>Enter your username and password to sign in.</p>"
             + error
             + '<form method="post"><input type="hidden" name="csrf" value="'
             + csrf
             + (
                 '"><div class="field"><label for="username">Username</label>'
                 '<input id="username" name="username" autocomplete="username" required '
-                'aria-describedby="username-hint" minlength="3" maxlength="64" '
+                'placeholder="Your username" aria-describedby="username-hint" '
+                'minlength="3" maxlength="64" '
                 'pattern="[A-Za-z0-9_.\\-]{3,64}">'
-                '<small class="hint" id="username-hint">3-64 characters: letters, numbers, '
-                "dots, underscores or hyphens.</small></div>"
+                '<small class="hint" id="username-hint">3-64 characters. Letters, numbers, '
+                ". _ -</small></div>"
                 '<div class="field"><label for="password">Password</label>'
                 '<input id="password" name="password" type="password" '
                 'autocomplete="current-password" required minlength="12" maxlength="256" '
-                'aria-describedby="password-hint">'
+                'placeholder="Password" aria-describedby="password-hint">'
                 '<small class="hint" id="password-hint">12-256 characters.</small></div>'
                 '<div class="actions">'
                 '<button name="action" value="login">Sign in</button>'
