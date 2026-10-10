@@ -393,3 +393,23 @@ the local 100% coverage gate. See the post-release record below for the publishe
 
 Production deployment and real ChatGPT/Claude workspace acceptance remain separate, unexecuted
 checks. These release and local integration results do not claim validation of the deployed server.
+
+## Authorization page refinement
+
+- [x] Preserve separate browser and MCP client authorization, following the user's selected flow.
+  Explain that connection options provide an MCP endpoint, while login and authorization routes
+  require a client-created transaction. Existing issuer sessions may proceed directly to consent.
+- [x] Extract the shared sign-in, consent and expired-flow layout into a packaged, script-free HTML
+  template and a replaceable authorization page renderer. Keep application and title values escaped.
+- [x] Provide a compact card, clearly associated labels, short 12px hints, 16px input text, visible
+  keyboard focus and at least 44px touch targets. Keep long names and URLs within the viewport.
+- [x] Show the requesting client and permissions at consent, with exact client/resource/callback
+  values in expandable connection details. Keep primary and secondary actions distinct.
+- [x] Preserve CSRF, Origin, transaction expiry, neutral credential errors, registration opt-in,
+  no-store responses and framing restrictions. Test hostile application/message/client HTML values.
+- [x] Verify real Chrome at 1440x900, 390x844, 320x568 and 844x390, including signup, retry, consent,
+  long expanded details, disabled registration and expired forms, without horizontal overflow.
+  Screenshots: `/tmp/oauth-signin-{desktop,mobile,small,landscape}.png`,
+  `/tmp/oauth-consent-mobile.png`. Evidence: `/tmp/oauth-responsive-browser.log`.
+- [ ] Publish the refined library before updating the game dependency, retain registry hashes,
+  repeat the combined browser and installed Docker HTTPS checks, and integrate the validated PRs.

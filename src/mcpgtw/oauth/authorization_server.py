@@ -25,6 +25,7 @@ from mcpgtw.oauth.consent_policy import ConsentPolicy
 from mcpgtw.oauth.endpoint_limits import OAuthEndpointLimits
 from mcpgtw.oauth.error_response import rate_limit_response, unavailable_response
 from mcpgtw.oauth.identity import IdentityAuthenticator
+from mcpgtw.oauth.page import AuthorizationPage
 from mcpgtw.oauth.signing_key import OAuthSigningKey
 from mcpgtw.oauth.state_store import OAuthStateStore
 from mcpgtw.oauth.token_verifier import AccessTokenVerifier
@@ -49,6 +50,7 @@ class AuthorizationServer(AccessTokenVerifier, ABC):
 
 class EmbeddedAuthorizationServer(AuthorizationServer):
     limits_class: type[OAuthEndpointLimits] = OAuthEndpointLimits
+    page_class: type[AuthorizationPage] = AuthorizationPage
 
     def __init__(
         self,
@@ -62,6 +64,7 @@ class EmbeddedAuthorizationServer(AuthorizationServer):
         limits: OAuthEndpointLimits | None = None,
     ) -> None:
         self.settings = settings
+        self.pages = self.page_class()
         self.identity = identity
         self.consent = consent
         self.store = store
@@ -209,21 +212,7 @@ class EmbeddedAuthorizationServer(AuthorizationServer):
 
     def page(self, title: str, body: str, status: int = 200) -> Response:
         return HTMLResponse(
-            (
-                '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="'
-                'viewport" content="width=device-width,initial-scale=1"><title>'
-            )
-            + html.escape(title)
-            + (
-                "</title><style>body{font:18px system-ui;background:#10212c;color:"
-                "#fff;max-width:520px;margin:8vh auto;padding:24px}input,button{di"
-                "splay:block;box-sizing:border-box;width:100%;padding:12px;margin:"
-                "12px 0;font:inherit}a{color:#8cd3ff}</style><h1>"
-            )
-            + html.escape(title)
-            + "</h1>"
-            + body
-            + "</html>",
+            self.pages.render(self.settings.app_name, title, body),
             status_code=status,
             headers={**HEADERS, "Referrer-Policy": "same-origin"},
         )
@@ -238,27 +227,35 @@ class EmbeddedAuthorizationServer(AuthorizationServer):
     def login_form(self, message: str = "", status: int = 200) -> Response:
         csrf = secrets.token_urlsafe(32)
         registration = (
-            '<button name="action" value="register">Create account</button>'
+            '<button class="secondary" name="action" value="register">Create account</button>'
             if self.identity.registration_enabled
-            else "<p>Account creation is disabled. Contact the server operator for access.</p>"
+            else '<p class="registration-note">Account creation is disabled. '
+            "Contact the server operator for access.</p>"
         )
-        error = '<p role="alert">' + html.escape(message) + "</p>" if message else ""
+        error = '<p class="notice" role="alert">' + html.escape(message) + "</p>" if message else ""
         response = self.page(
-            "Sign in to " + self.settings.app_name,
-            error
+            "Sign in",
+            "<p>Continue with your account.</p>"
+            + error
             + '<form method="post"><input type="hidden" name="csrf" value="'
             + csrf
             + (
-                '"><label>Username<input name="username" autocomplete="username" required '
-                'minlength="3" maxlength="64" pattern="[A-Za-z0-9_.\\-]{3,64}"></label>'
-                "<p>Use 3 to 64 letters, digits, dots, underscores or hyphens.</p>"
-                '<label>Password<input name="password" type="password" '
-                'autocomplete="current-password" required minlength="12" maxlength="256">'
-                "</label><p>Use a password with 12 to 256 characters.</p>"
+                '"><div class="field"><label for="username">Username</label>'
+                '<input id="username" name="username" autocomplete="username" required '
+                'aria-describedby="username-hint" minlength="3" maxlength="64" '
+                'pattern="[A-Za-z0-9_.\\-]{3,64}">'
+                '<small class="hint" id="username-hint">3-64 characters: letters, numbers, '
+                "dots, underscores or hyphens.</small></div>"
+                '<div class="field"><label for="password">Password</label>'
+                '<input id="password" name="password" type="password" '
+                'autocomplete="current-password" required minlength="12" maxlength="256" '
+                'aria-describedby="password-hint">'
+                '<small class="hint" id="password-hint">12-256 characters.</small></div>'
+                '<div class="actions">'
                 '<button name="action" value="login">Sign in</button>'
             )
             + registration
-            + "</form>",
+            + "</div></form>",
             status,
         )
         self.set_cookie(
@@ -406,24 +403,26 @@ class EmbeddedAuthorizationServer(AuthorizationServer):
         if request.method == "GET":
             nonce = secrets.token_urlsafe(32)
             body = (
-                "<p>Allow <strong>"
+                "<p><strong>"
                 + html.escape(client["name"])
-                + "</strong> to access "
+                + "</strong> would like to access "
                 + html.escape("your identity" if client["browser"] else "your game channel")
-                + "?</p><p>Client ID: "
-                + html.escape(client["client_id"])
-                + "</p><p>Resource: "
-                + html.escape(transaction.get("resource") or "your browser identity")
-                + "</p><p>Permissions: "
+                + '.</p><p class="permissions">Permissions: '
                 + html.escape(" ".join(transaction["scopes"]))
-                + "</p><p>Redirect: "
-                + html.escape(transaction["redirect_uri"])
                 + '</p><form method="post"><input type="hidden" name="csrf" value="'
                 + nonce
                 + (
-                    '"><button name="action" value="allow">Allow</button><button name='
-                    '"action" value="deny">Deny</button></form>'
+                    '"><div class="actions"><button name="action" value="allow">Allow</button>'
+                    '<button class="secondary" name="action" value="deny">Deny</button>'
+                    "</div></form><details><summary>Connection details</summary><dl>"
                 )
+                + "<dt>Client ID</dt><dd>"
+                + html.escape(client["client_id"])
+                + "</dd><dt>Resource</dt><dd>"
+                + html.escape(transaction.get("resource") or "your browser identity")
+                + "</dd><dt>Redirect</dt><dd>"
+                + html.escape(transaction["redirect_uri"])
+                + "</dd></dl></details>"
             )
             response = self.page("Authorize access", body)
             self.set_cookie(

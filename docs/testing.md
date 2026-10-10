@@ -72,6 +72,13 @@ Public MCP OAuth is opt-in and requires explicit channel grants. Provider WebSoc
 
 The embedded suite also runs a fixed-seed malformed-input fuzz corpus: 256 credentials and 768 token/registration/authorization requests must fail closed without reaching identity or consent. Endpoint budgets are raised only inside that test so parsing failures are exercised rather than hidden behind rate limiting.
 
+Authorization page tests submit hostile application names, error messages, client names and client
+identifiers and require escaped output with the no-store and framing policies intact. Responsive
+pages are also checked in real Chrome at 1440x900, 390x844, 320x568 and 844x390. The visual checks
+include 12px hints, keyboard focus, touch target height, collapsed consent details, expanded long
+values, errors, expired forms and disabled signup. Vertical scrolling on short screens remains
+available, and none of the checked pages scroll horizontally.
+
 `make sdk-smoke` runs real JavaScript providers against OAuth and static MCP clients on loopback. Requirements and test-only boundaries: [tests/e2e/README.md](../tests/e2e/README.md).
 
 The OAuth security cases are traceable to these suites:
