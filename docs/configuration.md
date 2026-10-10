@@ -116,6 +116,7 @@ Lists are comma separated. OAuth requires an application-provided channel access
 | `GATEWAY_OAUTH_EMBEDDED_CIMD_ENABLED` | `true` |
 | `GATEWAY_OAUTH_EMBEDDED_CIMD_ALLOWED_ORIGINS` | Empty permits public HTTPS origins; optional exact CSV origin allowlist |
 | `GATEWAY_OAUTH_EMBEDDED_DCR_ENABLED` | `false` |
+| `GATEWAY_OAUTH_EMBEDDED_AUTHORIZATION_TTL_SECONDS` | `600` for login, consent and CSRF (maximum 1800) |
 | `GATEWAY_OAUTH_EMBEDDED_AUTH_CODE_TTL_SECONDS` | `120` (maximum 300) |
 | `GATEWAY_OAUTH_EMBEDDED_ACCESS_TOKEN_TTL_SECONDS` | `900` |
 | `GATEWAY_OAUTH_EMBEDDED_REFRESH_TOKEN_TTL_SECONDS` | `2592000` |

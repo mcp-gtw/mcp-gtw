@@ -90,7 +90,7 @@ This repo is published to PyPI as `mcp-gtw` (the import package stays `mcpgtw`).
   [docs/deployment.md](docs/deployment.md).
 - **Quickstart / MCP clients / testing** — [docs/quickstart.md](docs/quickstart.md),
   [docs/mcp-clients.md](docs/mcp-clients.md), [docs/testing.md](docs/testing.md).
-- **OAuth** — public MCP authorization, per-tool policies, pluggable embedded AS with durable identity/consent, safe CIMD, and provider credential boundaries: [docs/oauth.md](docs/oauth.md).
+- **OAuth** — public MCP authorization, per-tool policies, pluggable embedded AS with durable identity/consent, explicit registration availability, separate login/code lifetimes, safe CIMD, and provider credential boundaries: [docs/oauth.md](docs/oauth.md).
 
 - **OAuth acceptance checklist** — detailed architecture, SEC/GAME/SDK/HOST/UPG requirements and execution evidence: [docs/oauth-implementation-checklist.md](docs/oauth-implementation-checklist.md). Keep open external checks explicit.
 

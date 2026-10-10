@@ -14,6 +14,10 @@ from mcpgtw.oauth.access_error import McpAccessError
 
 
 class IdentityAuthenticator(ABC):
+    @property
+    @abstractmethod
+    def registration_enabled(self) -> bool: ...
+
     @abstractmethod
     async def authenticate(
         self, username: str, password: str, register: bool = False
@@ -28,9 +32,13 @@ class SqlitePasswordIdentity(IdentityAuthenticator):
             raise ValueError("Durable identity storage and finite capacity are required")
 
         self.path = path
-        self.registration_enabled = registration_enabled
+        self._registration_enabled = registration_enabled
         self.maximum_users = maximum_users
         self._workers = asyncio.Semaphore(2)
+
+    @property
+    def registration_enabled(self) -> bool:
+        return self._registration_enabled
 
     def _authenticate(self, username: str, password: str, register: bool) -> str | None:
         try:

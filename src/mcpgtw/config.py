@@ -105,6 +105,7 @@ class GatewaySettings(BaseSettings):
         default_factory=list
     )
     oauth_embedded_dcr_enabled: bool = False
+    oauth_embedded_authorization_ttl_seconds: int = Field(default=600, ge=1, le=1800)
     oauth_embedded_auth_code_ttl_seconds: int = Field(default=120, ge=1, le=300)
     oauth_embedded_access_token_ttl_seconds: int = Field(default=900, ge=1)
     oauth_embedded_refresh_token_ttl_seconds: int = Field(default=2592000, ge=1)

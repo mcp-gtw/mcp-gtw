@@ -344,3 +344,29 @@ deployed final endpoint. Their status is NOT TESTED. Remote CI, commit, push, Py
 deployment are maintainer actions. Set GATEWAY_INTEGRATION_SHA after committing the gateway, then use
 the three exact commits for coordinated acceptance. Do not infer remote host success from the local
 100% coverage gate.
+
+
+## Post-release registration correction
+
+- [x] Separate the absolute login/consent deadline (600 seconds by default, bounded at 1800) from
+  authorization code expiry (120 seconds, bounded at 300). Keep expired transactions invalid even
+  when old cookies are replayed, and never extend their deadline through form refresh or retries.
+- [x] Keep login/consent CSRF cookies valid through the authorization window while preserving exact
+  Origin, duplicate-cookie and field checks. Verify real registration after a delayed form and
+  delayed consent, and retain short authorization-code expiry.
+- [x] Declare account registration availability in the identity contract. Hide the registration
+  button when disabled and reject forged registration before invoking the identity strategy.
+- [x] Render neutral credential errors and expired-login explanations as no-store HTML, without
+  echoing credentials or distinguishing unknown accounts, wrong passwords and duplicate signup.
+  Display and enforce the shipped username and password requirements in the form.
+- [x] Extend the game's BFF state and cookie deadline independently to 600 seconds, configurable
+  up to 1800. Reject expired-state replay without creating sessions or calling the identity client.
+- [x] Verify 529 gateway and 225 game tests with 100% line/branch coverage on Python 3.12/3.13/3.14.
+  The game still installs the published gateway 0.0.7 from PyPI. No unpublished dependency was
+  substituted. Logs: `/tmp/oauth-{core,game}-{3.12,3.13,3.14}-registration-fix.log`.
+- [x] Verify the corrected AS forms in actual local Chrome over HTTPS with real SQLite accounts:
+  disabled registration, username validation, neutral credential error, CSRF rotation and retry,
+  successful signup and consent. No browser script errors occurred.
+- [ ] Publish the corrected gateway before updating the game's gateway minimum/lockfile, then
+  repeat the combined game/browser/HTTPS smoke with that published package. The longer BFF deadline
+  alone cannot extend gateway 0.0.7's embedded authorization window.
