@@ -413,5 +413,36 @@ checks. These release and local integration results do not claim validation of t
   `/tmp/oauth-dark-consent-mobile.png`. Evidence: `/tmp/oauth-dark-browser.log`.
 - [x] Obtain approval of the dark desktop/mobile sign-in and consent screenshots before merging
   or publishing the page refinement. The user approved the dark screenshots on 2026-10-10.
-- [ ] Publish the refined library before updating the game dependency, retain registry hashes,
+- [x] Publish the refined library before updating the game dependency, retain registry hashes,
   repeat the combined browser and installed Docker HTTPS checks, and integrate the validated PRs.
+
+### Published 0.0.9 verification
+
+- [x] Integrate the approved dark design after all supported Python CI checks passed, and publish
+  0.0.9 through the release workflow before upgrading the game dependency.
+  [Gateway PR](https://github.com/mcp-gtw/mcp-gtw/pull/8),
+  [successful publication](https://github.com/mcp-gtw/mcp-gtw/actions/runs/38020454432).
+- [x] Verify the published wheel's SHA-256, all 55 Python modules and the complete dark HTML
+  template against the reviewed source. Confirm wheel and sdist availability on PyPI.
+  Evidence: `/tmp/oauth-009-pypi-evidence.json`.
+- [x] Verify 530 gateway tests and 225 game tests with 100% line/branch coverage and successful
+  lint/format checks across Python 3.12/3.13/3.14. The game installs published 0.0.9 with registry
+  URLs and artifact hashes, without source substitutions. Evidence:
+  `/tmp/oauth-009-core-final.log`, `/tmp/oauth-game-{3.12,3.13,3.14}-009-published.log`,
+  [gateway CI](https://github.com/mcp-gtw/mcp-gtw/actions/runs/38020382369),
+  [game CI](https://github.com/mcp-gtw/demo-game/actions/runs/38020646960).
+- [x] Exercise the actual game with real Chrome signup, browser consent, host PKCE, MCP gameplay,
+  refresh, code replay rejection, logout and simultaneous Token/OAuth. Inspector 2.10.1 lists the
+  ten tools, both players move, and browser script errors remain zero. Verify dark sign-in and
+  consent at all four viewport sizes, compact hints, touch targets and no horizontal overflow.
+  Evidence: `/tmp/oauth-009-embedded.log`,
+  `/tmp/oauth-game-{signin,consent}-{desktop,mobile,small,landscape}.png`.
+- [x] Build the game independently with Python 3.14 slim and confirm gateway 0.0.9 and the dark
+  template load from installed runtime site-packages. Repeat embedded authorization, DCR,
+  PKCE, tickets, gameplay, logout and Token through nginx HTTPS, including canonical Host
+  checks, public JWKS, private credential handling and non-root runtime hardening.
+  Evidence: `/tmp/oauth-009-docker.log`, `/tmp/oauth-009-proxy.log`.
+- [x] Integrate the game after successful CI and integration checks.
+  [Game PR](https://github.com/mcp-gtw/demo-game/pull/6).
+
+Production deployment and real ChatGPT/Claude workspace acceptance remain unexecuted.
