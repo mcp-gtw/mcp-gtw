@@ -63,6 +63,15 @@ requirements are visible in the form. Failed credentials use a neutral HTML mess
 distinguish unknown accounts, incorrect passwords or duplicate registrations and never echoes either
 credential. `SqlitePasswordIdentity` disables registration by default.
 
+Embedded sign-in, consent and expired-flow pages share a responsive, dark, script-free template at
+`web/oauth.html`. Labels are associated with their fields, short credential hints remain visible,
+errors are announced through an alert, and keyboard focus is visible. Consent keeps the client name
+and requested scopes visible while exact client, resource and callback values are available in
+expandable connection details. Long values wrap without overflowing narrow screens.
+`EmbeddedAuthorizationServer.page_class` selects the `AuthorizationPage` renderer for application
+styling. The renderer escapes the application name and page title. Page body fragments are built
+by the server with escaped client metadata and messages.
+
 `SqliteOAuthStateStore` hashes opaque identifiers, expires records, enforces finite capacity, consumes codes atomically and rotates refresh tokens in one transaction. Reuse revokes the token family; JWT verification consults the family on every admission/emission. `ConsentPolicy.approve` records an explicit user decision only at consent. `ConsentPolicy.validate` checks the existing approval during code exchange and refresh without writing or re-granting rights. `ConsentPolicy.binding` freezes the application-specific authorization target at consent and rejects exchange/refresh if that target changes. Subject revocation removes login sessions, pending codes and access/refresh families. In-flight tool work may still finish.
 
 `OAuthSigningKey` persists an RSA key with private permissions and publishes only its public JWK. Keep the key and database in a private persistent directory; keys and identities survive restart. Initial key generation occurs during construction, outside request paths. SQLite and password hashing execute off the event loop. The default password strategy uses 600,000 PBKDF2-HMAC-SHA256 iterations with per-user salts and a finite worker pool. Saturated password workers reject new work with HTTP 429 rather than creating an unbounded queue. Self-service registration is explicitly opt-in and there are no default passwords.
@@ -80,6 +89,12 @@ The default `RequiredScopesToolAccess` requires the transport's minimum scopes o
 The issuer is an exact HTTPS URI and may include a path prefix. RFC 8414 discovery is at `/.well-known/oauth-authorization-server<issuer-path>` and OIDC discovery at `<issuer-path>/.well-known/openid-configuration`. Authorization routes and cookie paths follow the issuer prefix, while CSRF verifies the issuer origin. Form pages use same-origin referrers so browser form Origin remains verifiable; redirects and credential responses suppress referrers. All pages disallow framing, external scripts and objects. Form submissions require a transaction cookie, CSRF cookie/field equality and exact Origin. Duplicate cookies/fields, oversized bodies, unsupported auth methods and unsafe redirects fail closed.
 
 ## Deployment and clients
+
+Add the application's MCP endpoint to the MCP client. The client discovers the authorization server
+and starts authorization with its registered callback, state and PKCE challenge. `/oauth/login`
+and `/oauth/authorize` are transaction routes, not standalone connection URLs. A valid issuer login
+session skips the sign-in form and proceeds to explicit consent. The demo game also signs the
+browser in separately to establish ownership of the channel shown in its OAuth connection options.
 
 The MCP mount follows the configured resource path, including any public prefix. The proxy must preserve this path. Use an exact HTTPS public resource URL, such as `https://mcpgame.paulox.dev/mcp` in the game. A client authorization request and token exchange must include that exact `resource`, even when connecting to a channel-specific path. With an external IdP, register exact callback URLs and public MCP client IDs there, with Authorization Code and PKCE S256. With the embedded server, pre-register clients or explicitly enable DCR so hosts can register their callbacks. HTTPS localhost exceptions require the separate development flag; keep that flag disabled in production.
 

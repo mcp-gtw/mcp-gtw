@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import html
 import os
 import random
 import time
@@ -1180,8 +1181,8 @@ async def test_prefixed_issuer_discovery_cookies_pkce_and_exact_origin(service):
         assert response.headers["location"] == issuer + "/oauth/consent"
         consent = await client.get(response.headers["location"])
         assert consent.status_code == 200
-        assert "Client ID: host" in consent.text
-        assert "Resource: " + RESOURCE in consent.text
+        assert "<dt>Client ID</dt><dd>host</dd>" in consent.text
+        assert "<dt>Resource</dt><dd>" + RESOURCE + "</dd>" in consent.text
         assert (await client.get("/oauth/login")).status_code == 404
 
 
@@ -1356,6 +1357,45 @@ async def test_disabled_registration_is_hidden_and_cannot_invoke_identity(servic
     assert response.status_code == 403
     assert "Account creation is disabled" in response.text
     server.identity.authenticate.assert_not_awaited()
+
+
+async def test_authorization_pages_escape_application_messages_and_client_metadata(service):
+    server, client = service
+    payload = '<img src=x onerror="alert(1)">'
+    server.settings.app_name = payload
+    response = server.login_form(payload, 403)
+    assert payload not in response.body.decode()
+    assert html.escape(payload) in response.body.decode()
+    assert response.headers["cache-control"] == "no-store"
+    assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
+
+    await code_for(client)
+    server.clients.add(
+        payload,
+        {
+            "client_name": payload,
+            "redirect_uris": [REDIRECT],
+            "token_endpoint_auth_method": "none",
+        },
+    )
+    response = await client.get(
+        "/oauth/authorize",
+        params={
+            "response_type": "code",
+            "client_id": payload,
+            "redirect_uri": REDIRECT,
+            "resource": RESOURCE,
+            "scope": "mcp:access",
+            "code_challenge": CHALLENGE,
+            "code_challenge_method": "S256",
+        },
+    )
+    assert response.status_code == 303
+    response = await client.get("/oauth/consent")
+    assert response.status_code == 200
+    assert payload not in response.text
+    assert "<strong>" + html.escape(payload) + "</strong>" in response.text
+    assert "<dd>" + html.escape(payload) + "</dd>" in response.text
 
 
 async def test_failed_login_has_neutral_html_without_credential_disclosure(service):
