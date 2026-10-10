@@ -105,7 +105,14 @@ The OAuth security cases are traceable to these suites:
 | SEC-26/28 | `test_embedded.py` and demo `tests/e2e/proxy.py`: cookie/consent protections and real Docker/nginx HTTPS discovery |
 | HOST-08 | `test_resource_server.py`: serialized tool securitySchemes, missing-scope challenge, no provider execution and successful reauthorization |
 
-The demo's `make embedded-smoke` uses the actual embedded AS and durable accounts in Chrome; `make oauth-smoke` exercises an external test IdP. Both use the official MCP client. Browser and proxy scripts are opt-in local integrations, not evidence of a remote ChatGPT/Claude connection. Real host account/workspace checks require a separately authorized accessible endpoint and are not covered by line/branch coverage. GitHub CI runs only after the maintainer pushes the coordinated branches.
+The demo's `make embedded-smoke` uses the actual embedded AS and durable accounts in Chrome.
+`make oauth-smoke` exercises an external test IdP. Both use the official MCP client. The game's
+embedded browser smoke runs in its regular Python 3.12 CI leg and uses a second real HTTPS
+callback origin. External-IdP and proxy scripts remain opt-in local integrations. These checks are
+not evidence of a remote ChatGPT/Claude workspace connection. Real host account/workspace checks
+require a separately authorized accessible endpoint and are not covered by line/branch coverage.
+Regular repository CI runs on PRs and main pushes. The coordinated acceptance workflow requires an
+explicit dispatch with full repository commits.
 
 ## Coordinated immutable integration
 
