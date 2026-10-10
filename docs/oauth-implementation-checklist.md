@@ -494,7 +494,40 @@ Production deployment and real ChatGPT/Claude workspace acceptance remain unexec
   Screenshots: `/tmp/oauth-reference-signin-{desktop,mobile,small,landscape}.png`,
   `/tmp/oauth-reference-consent-mobile.png`, `/tmp/oauth-public-url-popup-mobile.png`.
   Prepare 0.0.10 and verify its wheel includes the reviewed complete HTML and authorization module.
-- [ ] Publish the approved gateway revision, verify PyPI artifacts, then update the game's registry
+- [x] Publish the approved gateway revision, verify PyPI artifacts, then update the game's registry
   dependency and repeat combined browser/container checks before integrating its PR.
+
+### Published 0.0.10 verification
+
+- [x] Merge the approved monochrome pages only after the Python 3.12/3.13/3.14 CI matrix succeeds.
+  [Gateway PR](https://github.com/mcp-gtw/mcp-gtw/pull/10),
+  [CI](https://github.com/mcp-gtw/mcp-gtw/actions/runs/38022499057).
+- [x] Publish 0.0.10 through trusted publishing and create its GitHub release. Verify wheel/sdist
+  SHA-256 values, all 55 Python modules and the complete approved HTML against reviewed source.
+  [Publication](https://github.com/mcp-gtw/mcp-gtw/actions/runs/38022599956),
+  [release](https://github.com/mcp-gtw/mcp-gtw/releases/tag/v0.0.10).
+  Evidence: `/tmp/oauth-010-pypi-evidence.json`.
+- [x] Update the game minimum and lock to published PyPI 0.0.10 only after publication, with
+  registry URLs and verified hashes. Verify 235 Python tests at 100% line/branch coverage on all
+  supported Python versions, 44 frontend tests with 100% coverage, lint and distribution builds.
+  Evidence: `/tmp/oauth-game-{3.12,3.13,3.14}-010-published.log`,
+  `/tmp/oauth-010-game-gates.log`.
+- [x] Exercise actual installed 0.0.10 in Chrome through discovery, client-first signup and consent,
+  official MCP initialize, ten tools, gameplay and later browser login showing the same player.
+  Confirm public URL clipboard before login, browser-first flow, responsive approved pages,
+  Inspector 2.10.1, refresh, code replay rejection, logout, simultaneous Token/OAuth and zero
+  browser errors. Evidence: `/tmp/oauth-010-embedded.log`,
+  `/tmp/oauth-game-{signin,consent}-{desktop,mobile,small,landscape}.png`.
+- [x] Build the independent Python 3.14 slim game image using the published lock. Verify installed
+  gateway 0.0.10, site-packages origin, approved HTML and UID 10001. Check game wheel/sdist
+  include the built frontend, every current game module, documentation and the PyPI dependency.
+  Evidence: `/tmp/oauth-010-docker.log`.
+- [x] Run actual Docker through nginx HTTPS with both browser-first and client-first PKCE/DCR,
+  MCP gameplay before browser login, same-player browser adoption, canonical public endpoint,
+  Host spoof resistance, public-only JWKS, logout, Token, zero runtime capabilities, no SUID/SGID
+  executables and redacted logs. Evidence: `/tmp/oauth-010-proxy.log`.
+- [x] Merge the game after the final three-version CI matrix succeeds.
+  [Game PR](https://github.com/mcp-gtw/demo-game/pull/7),
+  [CI](https://github.com/mcp-gtw/demo-game/actions/runs/38022911491).
 
 Production deployment and actual ChatGPT/Claude workspace acceptance remain unexecuted.
