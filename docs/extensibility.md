@@ -34,6 +34,7 @@ gateway = Gateway(tokens=MyTokenProvider())  # or swap by instance
 | Idle-channel reclamation | `ExpiryPolicy` | `expiry` | `TtlExpiryPolicy` | `expiry_policy_class` / `expiry_policy` |
 | Wire frame parsing | `ProtocolCodec` | `codec` | `JsonProtocolCodec` | `codec_class` / `codec` |
 | Connection admission (auth) | `Authenticator` | `authenticator` | `TokenAuthenticator` | `authenticator_class` / `authenticator` |
+| MCP tool scopes | `ToolAccessPolicy` | `oauth.tool_access` | `RequiredScopesToolAccess` | `tool_access_policy_class` / `tool_access_policy` |
 | Channel storage & lifecycle | `ChannelRegistry` | `registry` | `ChannelRegistry` | `registry_class` / `registry` |
 | Per-session behaviour | `Channel` | `channel` | `Channel` | `channel_class` |
 | Lifecycle observation | `GatewayListener` | `listeners` | `Gateway` itself | override the hooks |
@@ -154,4 +155,9 @@ boundaries these invariants protect.
 
 ## OAuth client authorization
 
-Public MCP OAuth is opt-in and requires explicit channel grants. Provider WebSocket credentials remain separate. See [OAuth configuration, extension contracts, transport gates and deployment limits](oauth.md). The embedded authorization server is blocked at startup and remains unimplemented.
+Public MCP OAuth is opt-in and requires explicit channel grants. Provider WebSocket credentials remain separate. See [OAuth configuration, extension contracts, transport gates and deployment limits](oauth.md). Embedded OAuth requires an injected durable authorization server; the demo game supplies local account login and consent.
+
+OAuth uses the same abstract-contract/default-implementation convention. Rate budgets, metadata and
+session binding support both Gateway class attributes and constructor instances. The complete
+[OAuth contract table](oauth.md#strategy-contracts) includes code/refresh validation that cannot
+re-grant revoked consent. Class and instance replacements are exercised by the OAuth suite.

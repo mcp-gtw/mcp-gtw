@@ -79,7 +79,7 @@ This repo is published to PyPI as `mcp-gtw` (the import package stays `mcpgtw`).
   (a value colliding with a built-in route raises `GatewayConfigurationError`). The stats payload
   carries the version only when `GATEWAY_EXPOSE_VERSION=true`. Details: [docs/admin.md](docs/admin.md).
 - **Security** — trust boundaries, the two tokens, origin checks, WebSocket robustness, resource
-  limits, and version fingerprinting (the version is off the HTTP surface unless
+  limits, self-contained tool schemas without remote retrieval, and version fingerprinting (the version is off the HTTP surface unless
   `GATEWAY_EXPOSE_VERSION=true`): [docs/security.md](docs/security.md).
 - **Browser console** — turn any open page into a provider from DevTools (a `/sessions` subclass, an
   origin `*`, a paste-in snippet), plus the CSP/mixed-content caveats:
@@ -90,6 +90,13 @@ This repo is published to PyPI as `mcp-gtw` (the import package stays `mcpgtw`).
   [docs/deployment.md](docs/deployment.md).
 - **Quickstart / MCP clients / testing** — [docs/quickstart.md](docs/quickstart.md),
   [docs/mcp-clients.md](docs/mcp-clients.md), [docs/testing.md](docs/testing.md).
+- **OAuth** — public MCP authorization, per-tool policies, pluggable embedded AS with durable identity/consent, safe CIMD, and provider credential boundaries: [docs/oauth.md](docs/oauth.md).
+
+- **OAuth acceptance checklist** — detailed architecture, SEC/GAME/SDK/HOST/UPG requirements and execution evidence: [docs/oauth-implementation-checklist.md](docs/oauth-implementation-checklist.md). Keep open external checks explicit.
+
+- **OAuth CI and runtime** — immutable three-repo acceptance workflow, current pinned toolchains,
+  and transitive dependency constraints: [docs/testing.md](docs/testing.md#coordinated-immutable-integration).
+  Public MCP/issuer prefixes and slim-image hardening: [docs/deployment.md](docs/deployment.md).
 
 ## Key modules (`src/mcpgtw/`)
 
@@ -115,6 +122,8 @@ This repo is published to PyPI as `mcp-gtw` (the import package stays `mcpgtw`).
 - `compiled_tool.py` / `pending_request.py` / `json_websocket.py` — the channel's value types.
 - `config.py` — `GatewaySettings` (pydantic-settings, env prefix `GATEWAY_`).
 - `listeners.py` — `GatewayListener` hook interface that `Gateway` implements.
+- `oauth/` — isolated authorization strategies, embedded AS, identity/consent, durable state and
+  scope-bearing channel grants, metadata and limits. Contract map: [docs/oauth.md](docs/oauth.md).
 - `main.py` — the bundled runner: builds the default `Gateway().create_app()` and runs uvicorn with
   the transport limits (`ws_max_size`, `limit_concurrency`). This is the production entrypoint.
 
@@ -150,13 +159,15 @@ This repo is published to PyPI as `mcp-gtw` (the import package stays `mcpgtw`).
 ## Commands
 
 ```bash
-make install       # uv sync --extra dev
+make install       # uv sync --extra dev --locked
 make lint          # ruff check + ruff format --check
 make format        # apply formatting and safe fixes
 make test          # pytest
 make coverage      # pytest behind the 100% gate
 make version v=X.Y.Z  # rewrite the pyproject.toml version (validates semver)
 make build         # uv build (wheel + sdist)
+make sdk-smoke     # real JS providers with isolated Token/OAuth MCP clients
+make oauth-benchmark # bounded 1000-channel controller/session benchmark
 make run           # serve the bare gateway on 127.0.0.1:8000
 ```
 
@@ -189,5 +200,3 @@ change. Treat a doc that describes something the code no longer does as a bug.
   file free of other `{`/`}`. `web/admin.html` is served raw (its JS braces are fine).
 - Package data (`web/*`, `py.typed`) must ship in the wheel — hatchling includes
   everything under the package.
-
-- **OAuth** — public MCP authorization and private provider credential boundaries: [docs/oauth.md](docs/oauth.md).

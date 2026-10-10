@@ -10,7 +10,7 @@ FROM base AS build
 
 WORKDIR /build
 
-RUN pip install --no-cache-dir --upgrade pip==26.2.1 uv==0.12.24
+RUN pip install --no-cache-dir --upgrade pip==26.2.1 uv==0.13.0
 
 COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
@@ -41,7 +41,11 @@ RUN pip install --no-cache-dir --upgrade pip==26.2.1 \
 
 # Run the gateway with a fixed unprivileged UID and GID.
 RUN groupadd --gid 10001 gateway \
-    && useradd --uid 10001 --gid gateway --no-create-home gateway
+    && useradd --uid 10001 --gid gateway --no-create-home gateway \
+    && find / -xdev -type f -perm /6000 -exec chmod a-s {} + \
+    && rm -f /usr/bin/mount /usr/bin/umount /usr/bin/nsenter /usr/bin/infocmp \
+        /usr/bin/su /usr/bin/chfn /usr/bin/chsh /usr/bin/newgrp \
+        /usr/bin/passwd /usr/bin/gpasswd /usr/sbin/runuser
 
 USER gateway
 

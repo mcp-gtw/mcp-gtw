@@ -198,4 +198,33 @@ These are inherent to the design. Plan for them when the provider is not fully t
 
 ## OAuth client authorization
 
-Public MCP OAuth is opt-in and requires explicit channel grants. Provider WebSocket credentials remain separate. See [OAuth configuration, extension contracts, transport gates and deployment limits](oauth.md). The embedded authorization server is blocked at startup and remains unimplemented.
+Public MCP OAuth is opt-in and requires explicit channel grants. Provider WebSocket credentials remain separate. See [OAuth configuration, extension contracts, transport gates and deployment limits](oauth.md). Embedded OAuth requires an injected durable authorization server; the demo game supplies local account login and consent.
+
+## Container audit scope
+
+The 2026-10-09 local Trivy 0.75.0 scan of both final Python 3.14 slim images found no critical advisories and no Python package vulnerabilities. Debian 13.7 packages have 44 high-severity package findings covering eight distinct CVEs; these findings are retained rather than hidden or described as a clean image scan. The configured image digest remains the maintainer-requested official slim base. Debian's stable/security repositories do not yet provide fixes for these entries.
+
+| Advisory | Applicability to the shipped runtime |
+| --- | --- |
+| [CVE-2026-76642](https://security-tracker.debian.org/tracker/CVE-2026-76642), [CVE-2026-78408](https://security-tracker.debian.org/tracker/CVE-2026-78408), [CVE-2026-78409](https://security-tracker.debian.org/tracker/CVE-2026-78409), [CVE-2026-78410](https://security-tracker.debian.org/tracker/CVE-2026-78410) | Privileged mount/nsenter operations. The final images remove mount/umount/nsenter and unused account-switching executables, strip all SUID/SGID file bits, and run with UID 10001. The actual HTTPS smoke verifies these facts and zero effective capabilities. Vulnerable package records remain present in the raw scan. |
+| [CVE-2026-54369](https://security-tracker.debian.org/tracker/CVE-2026-54369) | Path-based libacl calls by a privileged process. The application does not call the affected ACL API and runs without root privileges. |
+| [CVE-2025-69720](https://security-tracker.debian.org/tracker/CVE-2025-69720) | The infocmp CLI parser. The final images remove the infocmp executable. HTTP and provider handlers do not process terminfo documents. |
+| [CVE-2026-16742](https://security-tracker.debian.org/tracker/CVE-2026-16742) | systemd-homed privilege escalation. The affected daemon is absent from the final image. |
+| [CVE-2026-9538](https://security-tracker.debian.org/tracker/CVE-2026-9538) | Perl Archive::Tar memory exhaustion. That module is absent and the application does not parse archives through Perl. |
+
+This is an applicability review for the supplied application and ordinary unprivileged runtime, not removal of the vulnerable OS packages or proof that every possible deployment is safe. Rebuild and rescan when the slim base receives updates. The local Python/npm audits, secret scan and protocol tests assess separate surfaces. Bandit findings are low-severity hardcoded-password heuristics on protocol enum strings, status-code mappings and empty optional-secret defaults. No credentials are embedded and no medium/high Bandit finding was reported.
+
+Channel grants persist the consented scope set as well as issuer/subject/client ownership and expiry.
+A token may use fewer scopes than the grant. A token claiming additional scopes is denied until an
+explicit new grant is approved. Updating a grant replaces its scope set, so removed rights cannot be
+recovered using an older broader token. This final SQLite schema requires a fresh grant database for
+the new feature. No historical-schema migration or permissive compatibility path is provided.
+
+## Self-contained tool schemas
+
+Input and output validators use an explicit immutable referencing.Registry with no retrieval
+function. Provider-controlled $ref/$dynamicRef values never trigger HTTP requests or filesystem
+reads. Internal definitions and references to the root schema ID work without IO. An unavailable
+reference returns a neutral tool validation error. Invalid input never reaches the provider.
+The hostile cases include loopback, cloud metadata, public HTTPS, file URLs and missing local
+anchors for both input/output and both reference keywords.

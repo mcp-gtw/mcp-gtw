@@ -1422,3 +1422,155 @@ async def test_client_call_rejects_bad_shape(settings: GatewaySettings) -> None:
 
     with pytest.raises(ProviderMessageError, match="object params"):
         await channel.handle_provider_call({"requestId": "r", "method": "x", "params": 5})
+
+
+@pytest.mark.parametrize("method", ["sampling/createMessage", "elicitation/create"])
+@pytest.mark.parametrize("origin", [None, "unknown", "other-channel-request", "without-session"])
+async def test_sec25_oauth_reverse_calls_cannot_choose_another_session(settings, method, origin):
+    config = settings.model_copy(update={"oauth_mode": "resource_server"})
+    channel, websocket = await attach_only(config)
+    first = ClientCallSession()
+    latest = ClientCallSession()
+    foreign = ClientCallSession()
+
+    for session in (first, latest, foreign):
+        session.create_kwargs = None
+        session.elicit_args = None
+
+    channel.remember_mcp_session(first)
+    channel.remember_mcp_session(latest)
+    loop = asyncio.get_running_loop()
+    channel._pending["own-request"] = PendingRequest(future=loop.create_future(), session=first)
+    channel._pending["without-session"] = PendingRequest(future=loop.create_future(), session=None)
+    other, _ = await attach_only(config)
+    other._pending["other-channel-request"] = PendingRequest(
+        future=loop.create_future(), session=foreign
+    )
+    params = (
+        {"messages": [], "maxTokens": 5}
+        if method == "sampling/createMessage"
+        else {"message": "confirm", "requestedSchema": {"type": "object", "properties": {}}}
+    )
+    message = {"requestId": "reverse", "method": method, "params": params}
+    await channel.handle_provider_call({**message, "originatingRequestId": origin})
+    assert websocket.last("response")["error"] == "No MCP client is connected"
+
+    for session in (first, latest, foreign):
+        assert session.create_kwargs is None
+        assert session.elicit_args is None
+
+    await channel.handle_provider_call({**message, "originatingRequestId": "own-request"})
+    assert "error" not in websocket.last("response")
+    assert first.create_kwargs if method == "sampling/createMessage" else first.elicit_args
+    assert latest.create_kwargs is None and latest.elicit_args is None
+    assert foreign.create_kwargs is None and foreign.elicit_args is None
+
+    for target in (channel, other):
+        for pending in target._pending.values():
+            pending.future.cancel()
+
+
+async def test_sec25_oauth_progress_and_resource_events_remain_session_scoped(settings):
+    config = settings.model_copy(update={"oauth_mode": "resource_server"})
+    channel, _ = await attach_only(config)
+    other, _ = await attach_only(config)
+    initiator, unrelated, foreign = RecordingSession(), RecordingSession(), RecordingSession()
+    channel.remember_mcp_session(initiator)
+    channel.remember_mcp_session(unrelated)
+    other.remember_mcp_session(foreign)
+    loop = asyncio.get_running_loop()
+    channel._pending["own"] = PendingRequest(
+        future=loop.create_future(), session=initiator, progress_token="private-progress"
+    )
+    other._pending["foreign"] = PendingRequest(
+        future=loop.create_future(), session=foreign, progress_token="foreign-progress"
+    )
+    channel._subscriptions["mem://private"] = {id(initiator)}
+    other._subscriptions["mem://private"] = {id(foreign)}
+    await channel.handle_provider_notification(
+        {"method": "notifications/progress", "params": {"requestId": "foreign", "progress": 1}}
+    )
+    assert not initiator.progress and not unrelated.progress and not foreign.progress
+    await channel.handle_provider_notification(
+        {"method": "notifications/progress", "params": {"requestId": "own", "progress": 1}}
+    )
+    assert initiator.progress == [("private-progress", 1, None, None)]
+    assert not unrelated.progress and not foreign.progress
+    await channel.handle_provider_notification(
+        {"method": "notifications/resources/updated", "params": {"uri": "mem://private"}}
+    )
+    assert initiator.updated == ["mem://private"]
+    assert not unrelated.updated and not foreign.updated
+    channel._drop_sessions([id(initiator)])
+    await channel.handle_provider_notification(
+        {"method": "notifications/resources/updated", "params": {"uri": "mem://private"}}
+    )
+    assert initiator.updated == ["mem://private"]
+    assert not foreign.updated
+
+    for target in (channel, other):
+        for pending in target._pending.values():
+            pending.future.cancel()
+
+
+@pytest.mark.parametrize("schema_kind", ["inputSchema", "outputSchema"])
+@pytest.mark.parametrize("keyword", ["$ref", "$dynamicRef"])
+@pytest.mark.parametrize(
+    "reference",
+    [
+        "http://127.0.0.1/private",
+        "http://169.254.169.254/latest/meta-data/",
+        "https://schemas.example/schema",
+        "file:///private/server-secrets.json",
+        "#/$defs/missing",
+    ],
+)
+async def test_sec13_provider_schema_references_never_retrieve(
+    settings, monkeypatch, schema_kind, keyword, reference
+):
+    from unittest.mock import AsyncMock, Mock
+
+    fetch = Mock(side_effect=AssertionError("Schema retrieval is forbidden"))
+    monkeypatch.setattr("urllib.request.urlopen", fetch)
+    provider = AsyncMock(return_value={"value": 1})
+    monkeypatch.setattr(Channel, "_call_provider", provider)
+    channel = make_channel(settings)
+    definition = {"name": "hostile", "inputSchema": {"type": "object"}}
+    definition[schema_kind] = {keyword: reference}
+    await channel.register("tools", [definition])
+    result = await channel.execute_tool(name="hostile", arguments={})
+    assert result.is_error
+    assert "unresolved schema reference" in result.content[0].text
+    assert reference not in result.content[0].text
+    assert provider.await_count == (schema_kind == "outputSchema")
+    fetch.assert_not_called()
+
+
+async def test_self_contained_schema_references_validate_without_retrieval(settings, monkeypatch):
+    from unittest.mock import AsyncMock, Mock
+
+    fetch = Mock(side_effect=AssertionError("Schema retrieval is forbidden"))
+    monkeypatch.setattr("urllib.request.urlopen", fetch)
+    provider = AsyncMock(return_value={"value": 1})
+    monkeypatch.setattr(Channel, "_call_provider", provider)
+    schema = {
+        "$id": "https://schemas.example/self-contained",
+        "$defs": {
+            "record": {
+                "type": "object",
+                "properties": {"value": {"type": "integer"}},
+                "required": ["value"],
+            }
+        },
+        "$ref": "https://schemas.example/self-contained#/$defs/record",
+    }
+    channel = make_channel(settings)
+    await channel.register(
+        "tools", [{"name": "local", "inputSchema": schema, "outputSchema": schema}]
+    )
+    result = await channel.execute_tool(name="local", arguments={"value": 1})
+    assert not result.is_error
+    assert result.structured_content == {"value": 1}
+    assert (await channel.execute_tool(name="local", arguments={"value": "bad"})).is_error
+    assert provider.await_count == 1
+    fetch.assert_not_called()

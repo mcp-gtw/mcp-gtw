@@ -68,6 +68,7 @@ class GatewaySettings(BaseSettings):
     oauth_required_scopes: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["mcp:access"]
     )
+    oauth_supported_scopes: Annotated[list[str], NoDecode] = Field(default_factory=list)
     oauth_allow_static_mcp_tokens: bool = False
     oauth_allow_localhost_http: bool = False
     oauth_token_verifier: Literal["jwt", "introspection", "custom"] = "jwt"
@@ -86,10 +87,33 @@ class GatewaySettings(BaseSettings):
     oauth_rate_limit_requests: int = Field(default=120, ge=1)
     oauth_rate_limit_window_seconds: float = Field(default=1, gt=0, allow_inf_nan=False)
     oauth_rate_limit_maximum_keys: int = Field(default=10000, ge=1)
+    oauth_rate_limit_backoff_seconds: float = Field(default=1, gt=0, allow_inf_nan=False)
+    oauth_rate_limit_maximum_backoff_seconds: float = Field(default=30, gt=0, allow_inf_nan=False)
+    oauth_embedded_rate_limit_window_seconds: float = Field(default=60, gt=0, allow_inf_nan=False)
+    oauth_embedded_browser_requests: int = Field(default=30, ge=1)
+    oauth_embedded_token_requests: int = Field(default=120, ge=1)
+    oauth_embedded_registration_requests: int = Field(default=10, ge=1)
+    oauth_embedded_metadata_requests: int = Field(default=120, ge=1)
+    oauth_embedded_cimd_requests: int = Field(default=10, ge=1)
+    oauth_embedded_client_requests: int = Field(default=120, ge=1)
+    oauth_embedded_principal_requests: int = Field(default=120, ge=1)
+    oauth_embedded_login_attempts: int = Field(default=10, ge=1)
     oauth_maximum_sessions: int = Field(default=10000, ge=1)
+    oauth_embedded_issuer: str = ""
+    oauth_embedded_cimd_enabled: bool = True
+    oauth_embedded_cimd_allowed_origins: Annotated[list[str], NoDecode] = Field(
+        default_factory=list
+    )
+    oauth_embedded_dcr_enabled: bool = False
+    oauth_embedded_auth_code_ttl_seconds: int = Field(default=120, ge=1, le=300)
+    oauth_embedded_access_token_ttl_seconds: int = Field(default=900, ge=1)
+    oauth_embedded_refresh_token_ttl_seconds: int = Field(default=2592000, ge=1)
 
     @model_validator(mode="after")
     def validate_oauth(self) -> GatewaySettings:
+        if self.oauth_rate_limit_backoff_seconds > self.oauth_rate_limit_maximum_backoff_seconds:
+            raise ValueError("OAuth backoff cannot exceed its maximum")
+
         if self.oauth_mode == "off":
             return self
 
@@ -112,9 +136,17 @@ class GatewaySettings(BaseSettings):
         if not resource.path.endswith("/mcp"):
             raise ValueError("OAuth resource URL must end with /mcp")
 
-        if not self.oauth_required_scopes or any(
-            not scope or any(ord(c) < 33 or ord(c) > 126 or c in '"\\' for c in scope)
-            for scope in self.oauth_required_scopes
+        self.oauth_supported_scopes = self.oauth_supported_scopes or list(
+            self.oauth_required_scopes
+        )
+
+        if (
+            not self.oauth_required_scopes
+            or not set(self.oauth_required_scopes) <= set(self.oauth_supported_scopes)
+            or any(
+                not scope or any(ord(c) < 33 or ord(c) > 126 or c in '"\\' for c in scope)
+                for scope in [*self.oauth_required_scopes, *self.oauth_supported_scopes]
+            )
         ):
             raise ValueError("OAuth scopes must be non-empty RFC 6749 scope tokens")
 
@@ -135,12 +167,39 @@ class GatewaySettings(BaseSettings):
         ):
             raise ValueError("Introspection requires one issuer, endpoint and client credentials")
 
+        if self.oauth_mode == "embedded":
+            for origin in self.oauth_embedded_cimd_allowed_origins:
+                validate_oauth_url(origin)
+
+                if urlsplit(origin).path:
+                    raise ValueError("CIMD allowed origins cannot include a path")
+
+            self.oauth_embedded_issuer = (
+                self.oauth_embedded_issuer or self.oauth_authorization_servers[0]
+            )
+            issuer = urlsplit(self.oauth_embedded_issuer)
+
+            if (
+                self.oauth_authorization_servers != [self.oauth_embedded_issuer]
+                or issuer.path.endswith("/")
+                or self.oauth_jwks_url != self.oauth_embedded_issuer + "/oauth/jwks"
+                or self.oauth_token_verifier != "jwt"
+                or "RS256" not in self.oauth_jwt_allowed_algorithms
+                or self.oauth_embedded_access_token_ttl_seconds
+                > self.oauth_embedded_refresh_token_ttl_seconds
+            ):
+                raise ValueError(
+                    "Embedded OAuth requires one canonical issuer, its JWKS and coherent lifetimes"
+                )
+
         return self
 
     @field_validator(
         "oauth_authorization_servers",
         "oauth_required_scopes",
+        "oauth_supported_scopes",
         "oauth_jwt_allowed_algorithms",
+        "oauth_embedded_cimd_allowed_origins",
         "allowed_provider_origins",
         "allowed_mcp_origins",
         "cors_allow_origins",

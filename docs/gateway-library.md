@@ -51,6 +51,8 @@ session manager, a channel reaper and your `serve` background tasks).
 | `expiry_policy_class` | `TtlExpiryPolicy` | When an idle channel is reclaimed. |
 | `codec_class` | `JsonProtocolCodec` | How an untrusted provider frame is parsed. |
 | `authenticator_class` | `TokenAuthenticator` | How a connection maps to a channel or is denied. |
+| `mcp_access_controller_class` | `TokenMcpAccessController` | Token adapter; inject `mcp_access_controller` for a custom OAuth controller. |
+| `tool_access_policy_class` | `RequiredScopesToolAccess` | Per-tool OAuth scopes; also injectable as `tool_access_policy`. |
 | `mcp_server_name` | `"mcp-gtw"` | The MCP server identifier. |
 
 Each can also be passed as a built instance to `Gateway(...)` for dependency injection
@@ -206,4 +208,8 @@ their own channel, and it is reclaimed automatically after `offline_ttl_seconds`
 
 ## OAuth client authorization
 
-Public MCP OAuth is opt-in and requires explicit channel grants. Provider WebSocket credentials remain separate. See [OAuth configuration, extension contracts, transport gates and deployment limits](oauth.md). The embedded authorization server is blocked at startup and remains unimplemented.
+Public MCP OAuth is opt-in and requires explicit channel grants. Provider WebSocket credentials remain separate. See [OAuth configuration, extension contracts, transport gates and deployment limits](oauth.md). Embedded OAuth requires an injected durable authorization server; the demo game supplies local account login and consent.
+
+OAuth composition also exposes `oauth_rate_limit_class`, `oauth_metadata_class` and
+`session_binding_store_class`, with `oauth_rate_limit=`, `oauth_metadata=` and `session_bindings=`
+instance injection. See the [OAuth strategy contracts](oauth.md#strategy-contracts).
