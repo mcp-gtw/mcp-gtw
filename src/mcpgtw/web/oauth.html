@@ -8,51 +8,49 @@
         :root {
             color-scheme: dark;
             font-family: system-ui, sans-serif;
-            color: #f1f5f9;
-            background: #090c10;
-            --muted: #a0aaba;
-            --hint: #8f9bad;
-            --border: #2d3541;
-            --accent: #82e7bd;
+            color: #fafafa;
+            background: #090909;
+            --muted: #a1a1aa;
+            --hint: #a1a1aa;
+            --border: #292929;
         }
         * { box-sizing: border-box; }
-        body { margin: 0; min-height: 100vh; min-height: 100svh; display: grid; place-items: center; padding: 32px 16px; background: radial-gradient(ellipse at 50% 0, #82e7bd0c, transparent 60%); }
+        body { margin: 0; min-height: 100vh; min-height: 100svh; display: grid; place-items: center; padding: 48px 24px; }
         main { width: 100%; max-width: 440px; min-width: 0; }
-        .brand { display: flex; align-items: center; gap: 10px; margin: 0 0 22px; font-size: 14px; font-weight: 600; letter-spacing: -.1px; overflow-wrap: anywhere; }
-        .mark { flex: none; display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid #82e7bd30; border-radius: 9px; background: #82e7bd0d; color: var(--accent); font-size: 18px; }
-        .card { padding: clamp(22px, 6vw, 36px); border: 1px solid #ffffff14; border-radius: 16px; background: linear-gradient(145deg, #151a22, #10141b); box-shadow: 0 24px 80px #00000040; }
-        h1 { font-size: 28px; line-height: 1.2; letter-spacing: -.7px; font-weight: 650; margin: 0 0 12px; overflow-wrap: anywhere; }
-        p { margin: 0 0 24px; font-size: 14px; line-height: 1.6; color: var(--muted); overflow-wrap: anywhere; }
-        strong { color: #f1f5f9; }
-        form { margin-top: 24px; }
-        .field { margin-bottom: 20px; }
-        label { display: block; margin-bottom: 8px; font-size: 13px; font-weight: 550; }
-        input:not([type="hidden"]) { width: 100%; min-height: 48px; padding: 11px 13px; border: 1px solid var(--border); border-radius: 9px; background: #0c1016; color: #f1f5f9; font: inherit; font-size: 16px; }
-        input:hover { border-color: #526173; }
+        .brand { margin: 0 0 28px; color: var(--muted); font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
+        h1 { font-size: clamp(34px, 8vw, 42px); line-height: 1.15; letter-spacing: -1.2px; font-weight: 700; margin: 0 0 16px; overflow-wrap: anywhere; }
+        p { margin: 0 0 28px; font-size: 16px; line-height: 1.6; color: var(--muted); overflow-wrap: anywhere; }
+        strong { color: #fafafa; }
+        form { margin-top: 36px; }
+        .field { margin-bottom: 26px; }
+        label { display: block; margin-bottom: 10px; font-size: 14px; font-weight: 500; }
+        input:not([type="hidden"]) { width: 100%; min-height: 54px; padding: 15px 17px; border: 1px solid var(--border); border-radius: 9px; background: #090909; color: #fafafa; font: inherit; font-size: 16px; }
+        input::placeholder { color: var(--muted); opacity: 1; }
+        input:hover { border-color: #525252; }
         .hint { display: block; margin-top: 7px; color: var(--hint); font-size: 12px; line-height: 1.5; }
-        .actions { display: grid; gap: 10px; }
-        button { width: 100%; min-height: 46px; padding: 12px 16px; border: 1px solid transparent; border-radius: 9px; background: var(--accent); color: #09271d; font: inherit; font-size: 14px; font-weight: 650; cursor: pointer; }
-        button:hover { background: #a2f2d0; }
-        button.secondary { background: transparent; color: #d7dfe9; border-color: var(--border); }
-        button.secondary:hover { background: #ffffff08; border-color: #526173; }
-        :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-        .notice { margin-bottom: 20px; padding: 12px 14px; border: 1px solid #ee9ca530; border-radius: 9px; background: #2b1a20; color: #f2a6b0; font-size: 13px; line-height: 1.5; }
+        .actions { display: grid; gap: 12px; margin-top: 32px; }
+        button { width: 100%; min-height: 52px; padding: 14px 18px; border: 1px solid transparent; border-radius: 9px; background: #fafafa; color: #090909; font: inherit; font-size: 16px; font-weight: 600; cursor: pointer; }
+        button:hover { background: #e4e4e7; }
+        button.secondary { background: transparent; color: #fafafa; border-color: var(--border); }
+        button.secondary:hover { background: #171717; border-color: #525252; }
+        :focus-visible { outline: 2px solid #fafafa; outline-offset: 3px; }
+        .notice { margin-bottom: 20px; padding: 12px 14px; border: 1px solid #4b2929; border-radius: 9px; background: #211616; color: #f2a6b0; font-size: 13px; line-height: 1.5; }
         .registration-note { margin: 16px 0 0; font-size: 12px; text-align: center; }
-        .permissions { padding: 12px 14px; border: 1px solid #82e7bd20; border-radius: 9px; background: #132921; font-size: 13px; color: #b4efcf; }
+        .permissions { padding: 14px 16px; border: 1px solid var(--border); border-radius: 9px; background: #111111; font-size: 13px; color: #e4e4e7; }
         details { margin-top: 20px; font-size: 12px; color: var(--muted); }
-        summary { cursor: pointer; padding: 8px 0; }
+        summary { cursor: pointer; padding: 14px 0; }
         dl { margin: 10px 0 0; }
         dt { margin-top: 12px; font-weight: 650; }
         dd { margin: 4px 0 0; line-height: 1.5; overflow-wrap: anywhere; }
-        footer { margin-top: 20px; text-align: center; color: var(--hint); font-size: 12px; line-height: 1.5; }
-        @media (max-width: 480px) { body { padding: 24px 16px; } .brand { margin-bottom: 16px; } }
+        footer { margin-top: 28px; color: var(--hint); font-size: 12px; line-height: 1.5; }
+        @media (max-width: 480px) { body { padding: 32px 20px; } .brand { margin-bottom: 24px; } }
         @media (max-height: 640px) { body { place-items: start center; } }
     </style>
 </head>
 <body>
     <main>
-        <div class="brand"><span class="mark" aria-hidden="true">↗</span><span>$application</span></div>
-        <section class="card" aria-labelledby="page-title">
+        <div class="brand">$application</div>
+        <section aria-labelledby="page-title">
             <h1 id="page-title">$title</h1>
             $body
         </section>
