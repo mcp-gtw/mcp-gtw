@@ -489,8 +489,11 @@ Production deployment and real ChatGPT/Claude workspace acceptance remain unexec
   Evidence: `/tmp/oauth-monochrome-core-{3.12,3.13,3.14}.log`,
   `/tmp/oauth-game-{3.12,3.13,3.14}-host-first-published.log`,
   `/tmp/oauth-public-url-gates.log`, `/tmp/oauth-host-first-external.log`.
-- [ ] Show new login, consent and public endpoint screenshots and obtain visual approval before
-  merging or publishing this revision.
+- [x] Show new login, consent and public endpoint screenshots and obtain visual approval before
+  merging or publishing this revision. The user approved the monochrome revision on 2026-10-10.
+  Screenshots: `/tmp/oauth-reference-signin-{desktop,mobile,small,landscape}.png`,
+  `/tmp/oauth-reference-consent-mobile.png`, `/tmp/oauth-public-url-popup-mobile.png`.
+  Prepare 0.0.10 and verify its wheel includes the reviewed complete HTML and authorization module.
 - [ ] Publish the approved gateway revision, verify PyPI artifacts, then update the game's registry
   dependency and repeat combined browser/container checks before integrating its PR.
 
