@@ -100,10 +100,11 @@ gates, real Chrome external/embedded login, official MCP clients, Inspector, 100
 load and production Docker/nginx HTTPS smoke. No release or publish step is present. Action SHAs,
 uv, npm, Node and Inspector are pinned. Record the three commits shown by the workflow.
 
-The demo unit workflow requires the repository variable `GATEWAY_INTEGRATION_SHA` containing the
-complete tested gateway commit. Set it after committing the coordinated feature. Branch names and
-implicit main-branch fallbacks are not used. Local changes are currently uncommitted at the user's
-request, so local worktree tests cannot be described as a run of those future GitHub commits.
+The demo unit workflow and Docker builds install the published gateway selected by its PyPI
+lockfile. They do not require a sibling checkout or `GATEWAY_INTEGRATION_SHA`. The coordinated
+workflow still checks out each repository by full commit SHA, and game integrations exercise the
+published gateway from the game lockfile. Record that installed package version alongside the
+checkout revisions when reviewing acceptance results.
 
 Registry checks cover all direct/dev/build and locked transitive packages. Babel 7 is constrained by
 magicast, es-module-lexer 2 and obug 2 by Vitest, nanoid 3 by postcss, mdn-data 2.27.1 by css-tree, and
