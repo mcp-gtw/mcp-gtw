@@ -207,7 +207,7 @@ class EmbeddedAuthorizationServer(AuthorizationServer):
 
         return dict(pairs)
 
-    def page(self, title: str, body: str) -> Response:
+    def page(self, title: str, body: str, status: int = 200) -> Response:
         return HTMLResponse(
             (
                 '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="'
@@ -224,8 +224,47 @@ class EmbeddedAuthorizationServer(AuthorizationServer):
             + "</h1>"
             + body
             + "</html>",
+            status_code=status,
             headers={**HEADERS, "Referrer-Policy": "same-origin"},
         )
+
+    def expired_authorization(self, status: int) -> Response:
+        return self.page(
+            "Sign-in expired",
+            "<p>Return to the application or MCP client and start sign-in again.</p>",
+            status,
+        )
+
+    def login_form(self, message: str = "", status: int = 200) -> Response:
+        csrf = secrets.token_urlsafe(32)
+        registration = (
+            '<button name="action" value="register">Create account</button>'
+            if self.identity.registration_enabled
+            else "<p>Account creation is disabled. Contact the server operator for access.</p>"
+        )
+        error = '<p role="alert">' + html.escape(message) + "</p>" if message else ""
+        response = self.page(
+            "Sign in to " + self.settings.app_name,
+            error
+            + '<form method="post"><input type="hidden" name="csrf" value="'
+            + csrf
+            + (
+                '"><label>Username<input name="username" autocomplete="username" required '
+                'minlength="3" maxlength="64" pattern="[A-Za-z0-9_.\\-]{3,64}"></label>'
+                "<p>Use 3 to 64 letters, digits, dots, underscores or hyphens.</p>"
+                '<label>Password<input name="password" type="password" '
+                'autocomplete="current-password" required minlength="12" maxlength="256">'
+                "</label><p>Use a password with 12 to 256 characters.</p>"
+                '<button name="action" value="login">Sign in</button>'
+            )
+            + registration
+            + "</form>",
+            status,
+        )
+        self.set_cookie(
+            response, "oauth_csrf", csrf, self.settings.oauth_embedded_authorization_ttl_seconds
+        )
+        return response
 
     async def authorize(self, request: Request) -> Response:
         self.limits.browser.enforce(self.address(request))
@@ -268,7 +307,7 @@ class EmbeddedAuthorizationServer(AuthorizationServer):
             transaction = await self.store.put(
                 "transaction",
                 {**params, "scopes": sorted(scopes), "browser": browser},
-                self.settings.oauth_embedded_auth_code_ttl_seconds,
+                self.settings.oauth_embedded_authorization_ttl_seconds,
             )
         except ValueError:
             return self.error("temporarily_unavailable", 503)
@@ -283,7 +322,7 @@ class EmbeddedAuthorizationServer(AuthorizationServer):
             response,
             "oauth_transaction",
             transaction,
-            self.settings.oauth_embedded_auth_code_ttl_seconds,
+            self.settings.oauth_embedded_authorization_ttl_seconds,
         )
         return response
 
@@ -293,25 +332,10 @@ class EmbeddedAuthorizationServer(AuthorizationServer):
         transaction = await self.store.get("transaction", self.cookie(request, "oauth_transaction"))
 
         if transaction is None:
-            return self.error()
+            return self.expired_authorization(400)
 
         if request.method == "GET":
-            nonce = secrets.token_urlsafe(32)
-            response = self.page(
-                "Sign in to " + self.settings.app_name,
-                '<form method="post"><input type="hidden" name="csrf" value="'
-                + nonce
-                + (
-                    '"><label>Username<input name="username" autocomplete="username" r'
-                    'equired minlength="3" maxlength="64"></label><label>Password<inpu'
-                    't name="password" type="password" autocomplete="current-password"'
-                    ' required minlength="12" maxlength="256"></label><button name="ac'
-                    'tion" value="login">Sign in</button><button name="action" value="'
-                    'register">Create account</button></form>'
-                ),
-            )
-            self.set_cookie(response, "oauth_csrf", nonce, 120)
-            return response
+            return self.login_form()
 
         try:
             form = await self.form(request)
@@ -328,6 +352,9 @@ class EmbeddedAuthorizationServer(AuthorizationServer):
         ):
             return self.error("access_denied", 403)
 
+        if form["action"] == "register" and not self.identity.registration_enabled:
+            return self.login_form("Account creation is disabled.", 403)
+
         account = hashlib.sha256(form.get("username", "").casefold().encode()).hexdigest()
         self.limits.login.enforce(account)
         subject = await self.identity.authenticate(
@@ -335,7 +362,9 @@ class EmbeddedAuthorizationServer(AuthorizationServer):
         )
 
         if subject is None:
-            return self.error("access_denied", 403)
+            return self.login_form(
+                "Sign-in or account creation failed. Check your credentials.", 403
+            )
 
         try:
             session = await self.store.put(
@@ -365,7 +394,7 @@ class EmbeddedAuthorizationServer(AuthorizationServer):
         logged = await self.store.get("login", self.cookie(request, "oauth_login"))
 
         if transaction is None or logged is None:
-            return self.error("access_denied", 403)
+            return self.expired_authorization(403)
 
         self.limits.principal.enforce(logged["subject"])
         self.limits.client.enforce(transaction["client_id"])
@@ -397,7 +426,12 @@ class EmbeddedAuthorizationServer(AuthorizationServer):
                 )
             )
             response = self.page("Authorize access", body)
-            self.set_cookie(response, "oauth_csrf", nonce, 120)
+            self.set_cookie(
+                response,
+                "oauth_csrf",
+                nonce,
+                self.settings.oauth_embedded_authorization_ttl_seconds,
+            )
             return response
 
         try:

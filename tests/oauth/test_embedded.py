@@ -38,6 +38,10 @@ CHALLENGE = (
 
 
 class Identity(IdentityAuthenticator):
+    @property
+    def registration_enabled(self):
+        return True
+
     async def authenticate(self, username, password, register=False):
         return "alice" if username == "alice" and password == "correct-password" else None
 
@@ -359,6 +363,7 @@ async def test_login_failures_rotation_and_rate_limits(service):
     ).status_code == 400
     client.cookies.set("oauth_login", "old", domain="game.example", path="/oauth")
     await server.store.put("login", {"subject": "alice"}, 120, "old")
+    form["csrf"] = client.cookies["oauth_csrf"]
     response = await client.post(
         "/oauth/login",
         data={**form, "password": "correct-password", "action": "register"},
@@ -1043,6 +1048,7 @@ async def test_sec16_account_budget_prevents_rotating_address_password_work(serv
         await client.post("/oauth/login", data=form, headers={"origin": ISSUER})
     ).status_code == 403
     form["username"] = "alice"
+    form["csrf"] = client.cookies["oauth_csrf"]
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=client._transport.app, client=("203.0.113.1", 123)),
         base_url=ISSUER,
@@ -1261,3 +1267,180 @@ async def test_sec20_unavailable_embedded_state_returns_neutral_503(service):
     assert response.json() == {"error": "temporarily_unavailable"}
     assert response.headers["cache-control"] == "no-store"
     assert response.headers["retry-after"] == "1"
+
+
+@pytest.mark.parametrize("elapsed", [180, 599])
+async def test_registration_wait_preserves_login_but_not_code_lifetime(
+    service, tmp_path, monkeypatch, elapsed
+):
+    server, client = service
+    server.identity = SqlitePasswordIdentity(str(tmp_path / "users.db"), True)
+    clock = [time.time()]
+    monkeypatch.setattr(time, "time", lambda: clock[0])
+    response = await client.get(
+        "/oauth/authorize",
+        params={
+            "response_type": "code",
+            "client_id": "browser",
+            "redirect_uri": REDIRECT,
+            "scope": "openid",
+            "state": "registration",
+            "nonce": "registration-nonce",
+            "code_challenge": CHALLENGE,
+            "code_challenge_method": "S256",
+        },
+    )
+    assert response.status_code == 303
+    response = await client.get("/oauth/login")
+    csrf = client.cookies["oauth_csrf"]
+    clock[0] += elapsed
+    assert "Max-Age=600" in response.headers["set-cookie"]
+    response = await client.post(
+        "/oauth/login",
+        data={
+            "csrf": csrf,
+            "username": "new-player",
+            "password": "strong-registration-password",
+            "action": "register",
+        },
+        headers={"origin": ISSUER},
+    )
+    assert response.status_code == 303
+    assert await server.identity.authenticate("new-player", "strong-registration-password")
+    response = await client.get("/oauth/consent")
+    assert response.status_code == 200
+    assert "Max-Age=600" in response.headers["set-cookie"]
+    clock[0] += min(180, 599 - elapsed)
+    response = await client.post(
+        "/oauth/consent",
+        data={"csrf": client.cookies["oauth_csrf"], "action": "allow"},
+        headers={"origin": ISSUER},
+    )
+    assert response.status_code == 303
+    code = parse_qs(urlsplit(response.headers["location"]).query)["code"][0]
+    assert await server.store.get("code", code) is not None
+    clock[0] += 121
+    assert await server.store.get("code", code) is None
+
+
+async def test_disabled_registration_is_hidden_and_cannot_invoke_identity(service, tmp_path):
+    server, client = service
+    await code_for(client)
+    await client.get(
+        "/oauth/authorize",
+        params={
+            "response_type": "code",
+            "client_id": "host",
+            "redirect_uri": REDIRECT,
+            "scope": "mcp:access",
+            "resource": RESOURCE,
+            "code_challenge": CHALLENGE,
+            "code_challenge_method": "S256",
+        },
+    )
+    server.identity = SqlitePasswordIdentity(str(tmp_path / "users.db"), False)
+    server.identity.authenticate = AsyncMock()
+    response = await client.get("/oauth/login")
+    assert "Create account" not in response.text
+    assert "Account creation is disabled" in response.text
+    response = await client.post(
+        "/oauth/login",
+        data={
+            "csrf": client.cookies["oauth_csrf"],
+            "username": "new-player",
+            "password": "strong-registration-password",
+            "action": "register",
+        },
+        headers={"origin": ISSUER},
+    )
+    assert response.status_code == 403
+    assert "Account creation is disabled" in response.text
+    server.identity.authenticate.assert_not_awaited()
+
+
+async def test_failed_login_has_neutral_html_without_credential_disclosure(service):
+    _, client = service
+    await code_for(client)
+    await client.get(
+        "/oauth/authorize",
+        params={
+            "response_type": "code",
+            "client_id": "host",
+            "redirect_uri": REDIRECT,
+            "scope": "mcp:access",
+            "resource": RESOURCE,
+            "code_challenge": CHALLENGE,
+            "code_challenge_method": "S256",
+        },
+    )
+    await client.get("/oauth/login")
+    response = await client.post(
+        "/oauth/login",
+        data={
+            "csrf": client.cookies["oauth_csrf"],
+            "username": "private-account",
+            "password": "private-wrong-password",
+            "action": "login",
+        },
+        headers={"origin": ISSUER},
+    )
+    assert response.status_code == 403
+    assert response.headers["content-type"].startswith("text/html")
+    assert "Sign-in or account creation failed" in response.text
+    assert "private-account" not in response.text
+    assert "private-wrong-password" not in response.text
+    assert response.headers["cache-control"] == "no-store"
+
+
+async def test_expired_authorization_has_safe_html_and_never_authenticates(service):
+    server, client = service
+    server.identity.authenticate = AsyncMock()
+    response = await client.post(
+        "/oauth/login",
+        data={"username": "new-player", "password": "private-password", "action": "register"},
+        headers={"origin": ISSUER},
+    )
+    assert response.status_code == 400
+    assert response.headers["content-type"].startswith("text/html")
+    assert "Sign-in expired" in response.text
+    assert "start sign-in again" in response.text
+    assert "private-password" not in response.text
+    server.identity.authenticate.assert_not_awaited()
+
+
+@pytest.mark.parametrize("elapsed", [600, 601])
+async def test_expired_registration_rejects_replayed_cookies(service, monkeypatch, elapsed):
+    server, client = service
+    clock = [time.time()]
+    monkeypatch.setattr(time, "time", lambda: clock[0])
+    await client.get(
+        "/oauth/authorize",
+        params={
+            "response_type": "code",
+            "client_id": "host",
+            "redirect_uri": REDIRECT,
+            "resource": RESOURCE,
+            "scope": "mcp:access",
+            "code_challenge": CHALLENGE,
+            "code_challenge_method": "S256",
+        },
+    )
+    await client.get("/oauth/login")
+    transaction = client.cookies["oauth_transaction"]
+    csrf = client.cookies["oauth_csrf"]
+    server.identity.authenticate = AsyncMock()
+    clock[0] += elapsed
+    response = await client.post(
+        "/oauth/login",
+        data={
+            "csrf": csrf,
+            "username": "new-player",
+            "password": "private-password",
+            "action": "register",
+        },
+        headers={"origin": ISSUER, "cookie": f"oauth_transaction={transaction}; oauth_csrf={csrf}"},
+    )
+    assert response.status_code == 400
+    assert "Sign-in expired" in response.text
+    assert await server.store.get("transaction", transaction) is None
+    server.identity.authenticate.assert_not_awaited()

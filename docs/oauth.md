@@ -50,6 +50,19 @@ The configurable request budgets track the trusted ASGI client address, verified
 
 The configured issuer serves OAuth/OIDC metadata, `/oauth/authorize`, login and explicit consent, `/oauth/token`, `/oauth/jwks` and RFC 7009 `/oauth/revoke`. Only Authorization Code with PKCE S256 is supported; exact registered redirects and canonical resource are checked in authorization and exchange. Public clients use `none`, the browser BFF uses `client_secret_basic`. ID tokens carry the browser nonce and client audience; they are never accepted as MCP access tokens.
 
+Login and consent transactions use `GATEWAY_OAUTH_EMBEDDED_AUTHORIZATION_TTL_SECONDS` (600 seconds,
+maximum 1800), including their transaction and CSRF cookies. Their deadline is absolute and is not
+extended by retrying credentials or opening a form again. Authorization codes retain their separate
+120-second lifetime. Expired browser flows return an HTML explanation and require a new sign-in
+from the application or MCP client. Protocol endpoints continue returning OAuth JSON errors.
+
+`IdentityAuthenticator.registration_enabled` explicitly declares whether account creation is
+available. The login form only offers account creation when enabled, and forged registration
+submissions are rejected before invoking the identity strategy when disabled. Username and password
+requirements are visible in the form. Failed credentials use a neutral HTML message that does not
+distinguish unknown accounts, incorrect passwords or duplicate registrations and never echoes either
+credential. `SqlitePasswordIdentity` disables registration by default.
+
 `SqliteOAuthStateStore` hashes opaque identifiers, expires records, enforces finite capacity, consumes codes atomically and rotates refresh tokens in one transaction. Reuse revokes the token family; JWT verification consults the family on every admission/emission. `ConsentPolicy.approve` records an explicit user decision only at consent. `ConsentPolicy.validate` checks the existing approval during code exchange and refresh without writing or re-granting rights. `ConsentPolicy.binding` freezes the application-specific authorization target at consent and rejects exchange/refresh if that target changes. Subject revocation removes login sessions, pending codes and access/refresh families. In-flight tool work may still finish.
 
 `OAuthSigningKey` persists an RSA key with private permissions and publishes only its public JWK. Keep the key and database in a private persistent directory; keys and identities survive restart. Initial key generation occurs during construction, outside request paths. SQLite and password hashing execute off the event loop. The default password strategy uses 600,000 PBKDF2-HMAC-SHA256 iterations with per-user salts and a finite worker pool. Saturated password workers reject new work with HTTP 429 rather than creating an unbounded queue. Self-service registration is explicitly opt-in and there are no default passwords.
