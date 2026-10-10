@@ -553,12 +553,36 @@ Production deployment and actual ChatGPT/Claude workspace acceptance remain unex
 - [x] Finish Python 3.12/3.13/3.14 lint and full 100% line/branch coverage gates with 548 tests
   per interpreter. Verify wheel/sdist source equality and absence of browser node_modules.
   Evidence: `/tmp/oauth-core-{3.12,3.13,3.14}-011.log`, `/tmp/oauth-011-core-build.log`.
-- [ ] Merge only after the three-version and browser CI jobs pass.
-- [ ] Publish 0.0.11 and verify the PyPI wheel/sdist against reviewed source before updating any
+- [x] Merge only after the three-version and browser CI jobs pass.
+  [Gateway PR](https://github.com/mcp-gtw/mcp-gtw/pull/12),
+  [CI](https://github.com/mcp-gtw/mcp-gtw/actions/runs/38024799368).
+- [x] Publish 0.0.11 and verify the PyPI wheel/sdist against reviewed source before updating any
   game dependency. Keep the game lockfile on published registry artifacts and verified hashes.
-- [ ] Change the game's embedded smoke to a real second HTTPS callback origin and check both
+  [Publication](https://github.com/mcp-gtw/mcp-gtw/actions/runs/38024912513),
+  [release](https://github.com/mcp-gtw/mcp-gtw/releases/tag/v0.0.11).
+  Evidence: `/tmp/oauth-011-pypi-evidence.json` (all 55 modules and complete HTML verified).
+- [x] Change the game's embedded smoke to a real second HTTPS callback origin and check both
   host-first and browser-first consent, approval/denial, official MCP tools, refresh/replay,
   account reuse, logout and Token coexistence. Add this browser gate to regular game CI.
-- [ ] Repeat the game Python/frontend coverage gates, external-IdP smoke and installed Docker/nginx
-  integration, then merge the game with the published correction. Production deployment and
-  authenticated ChatGPT/Claude workspace acceptance remain separate, unexecuted checks.
+  Evidence: `/tmp/oauth-011-game-browser.log` (Inspector 2.10.1, ten tools, four viewports).
+- [x] Repeat the game Python/frontend coverage gates, external-IdP smoke and installed Docker/nginx
+  integration. Verify 235 Python tests on all three versions and 45 frontend tests, all at 100%
+  line/branch coverage. The final image uses Python 3.14 slim, published 0.0.11 and UID 10001.
+  Evidence: `/tmp/oauth-game-{3.12,3.13,3.14}-011-published.log`,
+  `/tmp/oauth-011-game-client.log`, `/tmp/oauth-011-game-external.log`,
+  `/tmp/oauth-011-docker.log`, `/tmp/oauth-011-proxy.log`.
+- [x] Capture CSP console violations in the embedded browser gate. Keep the OAuth game's existing
+  self-only script CSP and disable Analytics in OAuth/dual deployments instead of permitting
+  remote scripts. Retain the existing Token-only Analytics bootstrap, exclude credential queries
+  and fragments from page URLs, and verify its event queue in unit tests and real Chrome.
+  Check exactly two expected HTTP 403 BFF sign-in probes separately from unexpected errors.
+  Evidence: `/tmp/oauth-011-game-browser.log`, `/tmp/oauth-011-token-only.log`.
+- [x] Expose the asset-loading lifecycle through standard `aria-busy` on the game root and
+  wait for loader completion and rendered frames before canvas clicks and after logout.
+  Network-idle alone misses asynchronous asset processing. Preserve no test-only game globals.
+  Keep failed-menu diagnostics restricted to screenshots without credentials.
+- [x] Merge the game only after the three-version CI and its new real-browser gate pass.
+  [Game PR](https://github.com/mcp-gtw/demo-game/pull/9),
+  [CI](https://github.com/mcp-gtw/demo-game/actions/runs/38026992108).
+  Production deployment and authenticated ChatGPT/Claude workspace acceptance remain separate,
+  unexecuted checks.
