@@ -173,6 +173,10 @@ make run           # serve the bare gateway on 127.0.0.1:8000
 
 ## Versioning and releasing
 
+Wait for a dependency version to be published to PyPI or npm before updating another project's
+dependency. Consumer dependencies must use published registry versions, never Git commit hashes,
+branches, sibling source checkouts or locally built replacement wheels.
+
 `pyproject.toml` is the single source of the version: `GatewaySettings.app_version` reads it back at
 runtime through `importlib.metadata.version("mcp-gtw")`, so never hardcode a version elsewhere.
 Bump with `make version v=X.Y.Z` (semver `X.Y.Z`, validated), then push a matching `v<version>` tag.
