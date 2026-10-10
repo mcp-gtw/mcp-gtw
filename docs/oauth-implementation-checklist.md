@@ -531,3 +531,34 @@ Production deployment and real ChatGPT/Claude workspace acceptance remain unexec
   [CI](https://github.com/mcp-gtw/demo-game/actions/runs/38022911491).
 
 Production deployment and actual ChatGPT/Claude workspace acceptance remain unexecuted.
+
+### Cross-origin consent correction for 0.0.11
+
+- [x] Reproduce the reported Chrome failure before changing code. The first approval consumes
+  the transaction but `form-action 'self'` blocks the external redirect, and a second click shows
+  an expired transaction. Earlier browser smoke callbacks used the issuer origin and missed this.
+  Evidence: `/tmp/oauth-csp-reproduction.log`.
+- [x] Permit the selected, already validated transaction callback in the consent page and redirect
+  response CSP. Preserve scheme, host, port and encoded path without query-derived directives.
+  Keep login and expired pages self-only, scripts/framing blocked, CSRF/Origin verification and
+  exact redirect validation. Preserve atomic transaction/code consumption without replay fallbacks.
+- [x] Test approval and denial with ChatGPT's callback shape, same-origin browser callbacks,
+  nondefault ports, IPv6, loopback HTTP, query injection, quotes and semicolon/path injection.
+  Require each policy to include only the selected registered callback and preserve base headers.
+- [x] Add an isolated, pinned real-browser gate to gateway PR and publication workflows. Run actual
+  HTTPS AS and callback servers on different hosts/ports, complete signup and consent after one
+  click, exchange the code, reject replay and consumed transactions, and block a different
+  registered callback when the form is tampered with. A blocked form cannot consume the valid
+  transaction. Evidence: `/tmp/oauth-011-core-browser.log`.
+- [x] Finish Python 3.12/3.13/3.14 lint and full 100% line/branch coverage gates with 548 tests
+  per interpreter. Verify wheel/sdist source equality and absence of browser node_modules.
+  Evidence: `/tmp/oauth-core-{3.12,3.13,3.14}-011.log`, `/tmp/oauth-011-core-build.log`.
+- [ ] Merge only after the three-version and browser CI jobs pass.
+- [ ] Publish 0.0.11 and verify the PyPI wheel/sdist against reviewed source before updating any
+  game dependency. Keep the game lockfile on published registry artifacts and verified hashes.
+- [ ] Change the game's embedded smoke to a real second HTTPS callback origin and check both
+  host-first and browser-first consent, approval/denial, official MCP tools, refresh/replay,
+  account reuse, logout and Token coexistence. Add this browser gate to regular game CI.
+- [ ] Repeat the game Python/frontend coverage gates, external-IdP smoke and installed Docker/nginx
+  integration, then merge the game with the published correction. Production deployment and
+  authenticated ChatGPT/Claude workspace acceptance remain separate, unexecuted checks.

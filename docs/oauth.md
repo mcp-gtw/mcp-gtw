@@ -88,6 +88,14 @@ The default `RequiredScopesToolAccess` requires the transport's minimum scopes o
 
 The issuer is an exact HTTPS URI and may include a path prefix. RFC 8414 discovery is at `/.well-known/oauth-authorization-server<issuer-path>` and OIDC discovery at `<issuer-path>/.well-known/openid-configuration`. Authorization routes and cookie paths follow the issuer prefix, while CSRF verifies the issuer origin. Form pages use same-origin referrers so browser form Origin remains verifiable; redirects and credential responses suppress referrers. All pages disallow framing, external scripts and objects. Form submissions require a transaction cookie, CSRF cookie/field equality and exact Origin. Duplicate cookies/fields, oversized bodies, unsupported auth methods and unsafe redirects fail closed.
 
+Consent pages and their responses include the transaction's validated callback in CSP `form-action`
+so a browser can follow the form's HTTP 303 redirect to an external MCP client. The source retains
+the callback scheme, authority, port and encoded path, excludes its query, and encodes CSP directive
+delimiters. Other registered callbacks are not added to that page's policy. Login and expired pages
+retain `form-action 'self'`. The server still redirects only to the exact registered transaction URI
+and consumes each transaction and authorization code once. Removing CSP or allowing every HTTPS
+destination is unnecessary. See [cross-origin browser verification](testing.md#oauth-client-authorization).
+
 ## Deployment and clients
 
 Add the application's MCP endpoint to the MCP client. The client discovers the authorization server

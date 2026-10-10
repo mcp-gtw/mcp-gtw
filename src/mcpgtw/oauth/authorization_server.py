@@ -8,7 +8,7 @@ import re
 import secrets
 import time
 from abc import ABC, abstractmethod
-from urllib.parse import parse_qsl, unquote_plus, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, unquote_plus, urlencode, urlsplit, urlunsplit
 
 import jwt
 from fastapi import FastAPI
@@ -216,6 +216,25 @@ class EmbeddedAuthorizationServer(AuthorizationServer):
             status_code=status,
             headers={**HEADERS, "Referrer-Policy": "same-origin"},
         )
+
+    @staticmethod
+    def consent_headers(redirect_uri: str) -> dict[str, str]:
+        redirect = urlsplit(redirect_uri)
+        destination = urlunsplit(
+            (
+                redirect.scheme,
+                quote(redirect.netloc, safe="[]:.-"),
+                quote(redirect.path, safe="/%"),
+                "",
+                "",
+            )
+        )
+        return {
+            **HEADERS,
+            "Content-Security-Policy": HEADERS["Content-Security-Policy"].replace(
+                "form-action 'self'", "form-action 'self' " + destination
+            ),
+        }
 
     def expired_authorization(self, status: int) -> Response:
         return self.page(
@@ -426,6 +445,8 @@ class EmbeddedAuthorizationServer(AuthorizationServer):
                 + "</dd></dl></details>"
             )
             response = self.page("Authorize access", body)
+            response.headers.update(self.consent_headers(transaction["redirect_uri"]))
+            response.headers["Referrer-Policy"] = "same-origin"
             self.set_cookie(
                 response,
                 "oauth_csrf",
@@ -493,7 +514,7 @@ class EmbeddedAuthorizationServer(AuthorizationServer):
         response = RedirectResponse(
             urlunsplit((parts.scheme, parts.netloc, parts.path, query, "")),
             status_code=303,
-            headers=HEADERS,
+            headers=self.consent_headers(transaction["redirect_uri"]),
         )
         response.delete_cookie(
             "oauth_transaction", path=self.cookie_path, secure=True, httponly=True, samesite="lax"

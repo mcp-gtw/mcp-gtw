@@ -1,4 +1,26 @@
-# JavaScript provider integration
+# Local browser and provider integration
+
+## Cross-origin consent browser gate
+
+Install the isolated pinned browser toolchain with `npm --prefix tests/e2e/browser ci`, then
+`tests/e2e/browser/node_modules/.bin/playwright install chromium`. On Linux, use `install --with-deps chromium`
+to install the browser system dependencies too. Run `make consent-smoke`. `TEST_CHROME`
+can select an installed Chrome executable. Ports 19502 and 19503 must be free.
+
+The runner starts two actual loopback HTTPS servers with temporary TLS certificates. The real
+embedded AS, SQLite state, password identity and signing key handle signup, consent and code
+exchange. A separate callback receiver on a different host and port handles redirects. The fixture
+consent policy explicitly approves authenticated test accounts and has no game-channel behavior.
+
+Chromium must follow approval and denial after one click, preserve issuer/state, reject replay,
+and block an altered form destination that is a different registered callback. The blocked form
+cannot consume the valid transaction. Registration and code lifetime remain real server behavior.
+No HTTP interceptor replaces redirects, and no authorization code is sent to a remote service.
+The fixture uses private temporary state and stops both servers on completion. This test runs on
+every gateway PR and in the publication workflow. Actual ChatGPT/Claude workspaces remain separate
+acceptance checks.
+
+## Provider transport smoke
 
 Keep the `mcp-gtw-provider` checkout beside this repository. Run `make sdk-smoke` with supported Node 22/24/26 and the Python development environment installed. Port 19480 must be free; the runner refuses to reuse an occupied port.
 

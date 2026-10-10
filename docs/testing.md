@@ -79,6 +79,14 @@ include 12px hints, keyboard focus, touch target height, collapsed consent detai
 values, errors, expired forms and disabled signup. Vertical scrolling on short screens remains
 available, and none of the checked pages scroll horizontally.
 
+`make consent-smoke` starts the actual embedded authorization server on local HTTPS and drives
+Chromium through signup, approval, denial and code exchange with a client callback on a different
+HTTPS origin. Both origins are served locally. No authorization code is sent to a remote client.
+The test requires one click to reach the callback, preserves state and issuer, rejects code replay
+and consumed transactions, and verifies that a forged form destination is blocked even when it is
+another callback registered to that client. This gate runs on every gateway PR and before publishing.
+Setup and test boundaries: [tests/e2e/README.md](../tests/e2e/README.md).
+
 `make sdk-smoke` runs real JavaScript providers against OAuth and static MCP clients on loopback. Requirements and test-only boundaries: [tests/e2e/README.md](../tests/e2e/README.md).
 
 The OAuth security cases are traceable to these suites:

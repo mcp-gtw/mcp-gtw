@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help install lint format test coverage version build run sdk-smoke oauth-benchmark
+.PHONY: help install lint format test coverage version build run sdk-smoke oauth-benchmark consent-smoke
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "} {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
@@ -34,6 +34,9 @@ run: ## Serve the bare generic gateway on 127.0.0.1:8000
 
 sdk-smoke: ## Exercise real JavaScript providers with OAuth and Token MCP clients
 	uv run python tests/e2e/sdk_run.py
+
+consent-smoke: ## Verify HTTPS cross-origin consent in Chromium
+	uv run python tests/e2e/consent_run.py
 
 oauth-benchmark: ## Measure 1000-channel controller capacity with a test-only verifier
 	uv run python tests/e2e/benchmark.py

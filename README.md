@@ -139,6 +139,10 @@ Licensed under [MIT](LICENSE.md).
 
 Public MCP OAuth is opt-in and requires explicit channel grants. Provider WebSocket credentials remain separate. See [OAuth configuration, extension contracts, transport gates and deployment limits](docs/oauth.md). Embedded OAuth requires an injected durable authorization server; the demo game supplies local account login and consent, including client-initiated authorization before browser login.
 
+Embedded consent permits the validated client callback through its form security policy, including
+cross-origin clients. Real-browser approval, denial and tampered-destination tests run in CI and
+before publication. See [browser verification](docs/testing.md#oauth-client-authorization).
+
 MCP clients start authorization from the MCP endpoint through discovery. Embedded login and consent
 use responsive pages with compact field hints and expandable connection details.
 
