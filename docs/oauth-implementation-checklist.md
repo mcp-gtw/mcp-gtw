@@ -339,11 +339,11 @@ animation helper. The Phaser view layer is checked by the actual browser builds/
 of 100% unit branch coverage. MCP SDK logging deprecation warnings are upstream warnings, not resource
 leaks. The Python matrix also treats ResourceWarning and unraisable exceptions as errors.
 
-The only open acceptance items are HOST-11/HOST-12, requiring authorized real host accounts and a
-deployed final endpoint. Their status is NOT TESTED. Remote CI, commit, push, PyPI/npm publishing and
-deployment are maintainer actions. Set GATEWAY_INTEGRATION_SHA after committing the gateway, then use
-the three exact commits for coordinated acceptance. Do not infer remote host success from the local
-100% coverage gate.
+This snapshot predates publication. HOST-11/HOST-12 require authorized real host accounts and a
+deployed final endpoint and remain NOT TESTED. Current consumers install published registry packages.
+The coordinated acceptance workflow uses complete commits to select repository checkouts, without
+substituting source for the game's locked PyPI dependency. Do not infer remote host success from
+the local 100% coverage gate. See the post-release record below for the published correction.
 
 
 ## Post-release registration correction
@@ -367,6 +367,29 @@ the three exact commits for coordinated acceptance. Do not infer remote host suc
 - [x] Verify the corrected AS forms in actual local Chrome over HTTPS with real SQLite accounts:
   disabled registration, username validation, neutral credential error, CSRF rotation and retry,
   successful signup and consent. No browser script errors occurred.
-- [ ] Publish the corrected gateway before updating the game's gateway minimum/lockfile, then
-  repeat the combined game/browser/HTTPS smoke with that published package. The longer BFF deadline
-  alone cannot extend gateway 0.0.7's embedded authorization window.
+- [x] Publish the corrected gateway before updating the game's gateway minimum/lockfile, then
+  repeat the combined game/browser/HTTPS smoke with that published package. Gateway 0.0.8 was
+  published through the release workflow before the game changed to `mcp-gtw>=0.0.8`.
+
+### Published 0.0.8 verification
+
+- [x] Merge the registration correction and release PRs after all three supported Python CI checks.
+  [Correction PR](https://github.com/mcp-gtw/mcp-gtw/pull/5),
+  [release PR](https://github.com/mcp-gtw/mcp-gtw/pull/6),
+  [successful publication](https://github.com/mcp-gtw/mcp-gtw/actions/runs/38018886791).
+- [x] Verify PyPI wheel and sdist availability, the wheel's SHA-256 and all 54 Python source modules
+  against the reviewed release source. Evidence: `/tmp/oauth-008-pypi-evidence.json`.
+- [x] Upgrade only the game's gateway dependency to published 0.0.8, retaining registry URLs and
+  artifact hashes. Verify 225 game tests, lint, formatting and 100% line/branch coverage on Python
+  3.12/3.13/3.14. Logs: `/tmp/oauth-game-{3.12,3.13,3.14}-008-published.log`.
+- [x] Repeat real Chrome signup, consent, host PKCE, MCP gameplay, refresh/replay rejection, logout
+  and simultaneous Token against the installed published gateway. Inspector 2.10.1 lists the ten
+  game tools. Evidence: `/tmp/oauth-008-embedded.log`.
+- [x] Build the game independently with Python 3.14 slim and published PyPI dependencies. Verify
+  gateway 0.0.8 loads from runtime site-packages. Repeat real embedded authorization, DCR, browser
+  and host PKCE, tickets, gameplay, logout and Token through nginx HTTPS, including forged Host
+  checks and non-root runtime hardening. Evidence: `/tmp/oauth-008-docker.log`,
+  `/tmp/oauth-008-proxy.log`.
+
+Production deployment and real ChatGPT/Claude workspace acceptance remain separate, unexecuted
+checks. These release and local integration results do not claim validation of the deployed server.
